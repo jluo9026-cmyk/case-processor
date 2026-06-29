@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>附件处理器合并版</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root {
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --bg: #f8fafc;
+    --card-bg: #ffffff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+    color: white;
+    padding: 1.5rem 1rem;
+    text-align: center;
+  }
+  .header h1 { font-size: 1.5rem; margin-bottom: 0.3rem; }
+  .header p { opacity: 0.85; font-size: 0.9rem; }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 1rem; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+  .full-width { grid-column: 1 / -1; }
+
+  .card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .card-body { padding: 1rem; }
+
+  .form-group { margin-bottom: 1rem; }
+  .form-group label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 0.3rem;
+  }
+  .form-group label .required { color: var(--error); }
+
+  .file-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .file-upload-zone:hover {
+    border-color: var(--primary);
+    background: rgba(37,99,235,0.03);
+  }
+  .file-upload-zone.has-file { border-color: var(--success); background: rgba(34,197,94,0.05); }
+  .file-upload-zone .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  .file-upload-zone .hint { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.3rem; }
+
+  textarea {
+    width: 100%;
+    min-height: 200px;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    resize: vertical;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+  .btn-success { background: var(--success); color: white; }
+  .btn-success:hover:not(:disabled) { background: #16a34a; }
+  .btn-outline { background: white; color: var(--text); border: 1px solid var(--border); }
+  .btn-outline:hover:not(:disabled) { background: #f1f5f9; }
+
+  .btn-row { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+  .btn-large { padding: 0.8rem 2rem; font-size: 1rem; font-weight: 600; }
+
+  .status {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+  .status-info { background: #eff6ff; color: #1e40af; }
+  .status-success { background: #f0fdf4; color: #166534; }
+  .status-error { background: #fef2f2; color: #991b1b; }
+  .status-running { background: #fef3c7; color: #92400e; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .stat-card {
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 0.75rem;
+    text-align: center;
+  }
+  .stat-number { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
+  .stat-label { font-size: 0.75rem; color: var(--text-secondary); }
+
+  .preview-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 500px;
+    overflow-y: auto;
+  }
+  .preview-card pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 1rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  /* Markdown渲染样式 */
+  .markdown-body {
+    padding: 1rem;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.6;
+  }
+  .markdown-body h1 { font-size: 1.5rem; font-weight: bold; margin: 1rem 0 0.5rem; color: #333; }
+  .markdown-body h2 { font-size: 1.25rem; font-weight: bold; margin: 0.8rem 0 0.4rem; color: #333; }
+  .markdown-body h3 { font-size: 1.1rem; font-weight: bold; margin: 0.6rem 0 0.3rem; color: #333; }
+  .markdown-body p { margin: 0.5rem 0; }
+  .markdown-body img { max-width: 100%; height: auto; border-radius: 4px; margin: 0.5rem 0; }
+  .markdown-body blockquote { border-left: 3px solid #ddd; padding-left: 1rem; color: #666; margin: 0.5rem 0; }
+  .markdown-body hr { border: none; border-top: 1px solid #ddd; margin: 1rem 0; }
+  .markdown-body table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+  .markdown-body th, .markdown-body td { border: 1px solid #ddd; padding: 0.4rem; }
+  .markdown-body th { background: #f5f5f5; }
+
+  .mapping-section {
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .mapping-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .mapping-item:last-child { border-bottom: none; }
+  .mapping-label {
+    font-weight: 500;
+    min-width: 100px;
+    color: var(--primary);
+  }
+  .mapping-range {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+  .mapping-count {
+    font-size: 0.75rem;
+    background: #e2e8f0;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+    gap: 0.3rem;
+    margin-top: 0.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .image-thumb {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    cursor: pointer;
+  }
+  .image-thumb:hover { border-color: var(--primary); }
+  .image-thumb.selected { border-color: var(--success); }
+  .image-info {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.3rem;
+  }
+
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+  }
+  .tab {
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-size: 0.9rem;
+  }
+  .tab:hover { color: var(--primary); }
+  .tab.active { border-color: var(--primary); color: var(--primary); }
+
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #e2e8f0;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--primary);
+    transition: width 0.3s;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📎 附件处理器合并版</h1>
+  <p>映射生成 Markdown + 转换为 Word</p>
+</div>
+
+<div class="container">
+  <div class="grid">
+    
+    <!-- ======== 左侧：上传文件 ======== -->
+    <div class="card">
+      <div class="card-header">📥 上传文件</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>① <span class="required">*</span> DOCX 模板</label>
+          <div class="file-upload-zone" id="docxZone" onclick="document.getElementById('docxInput').click()">
+            <div class="icon">📄</div>
+            <div>点击上传 DOCX 模板</div>
+            <div class="hint">可选，用于提取文档内容</div>
+            <div class="file-name" id="docxFileName" style="display:none;"></div>
+          </div>
+          <input type="file" id="docxInput" accept=".docx" style="display:none" onchange="handleDocxUpload(this)">
+        </div>
+
+        <div class="form-group">
+          <label>② <span class="required">*</span> 图片文件</label>
+          <div class="file-upload-zone" id="imageZone" onclick="document.getElementById('imageInput').click()">
+            <div class="icon">🖼️</div>
+            <div>点击上传图片</div>
+            <div class="hint">支持 jpg/png/gif/webp，可多选</div>
+            <div class="file-name" id="imageCount" style="display:none;"></div>
+          </div>
+          <input type="file" id="imageInput" accept="image/*" multiple style="display:none" onchange="handleImageUpload(this)">
+          <div class="image-grid" id="imageGrid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== 中间：附件映射 ======== -->
+    <div class="card">
+      <div class="card-header">📋 附件映射配置</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>附件名称清单（将替换模板中的附件）</label>
+          <textarea id="customNames" placeholder="每行一个，格式：附件一：惠州市中拓模塑科技有限公司车间现场照片
+将会替换掉原DOCX模板中的附件内容"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label style="display:flex; align-items:center; gap:0.5rem;">
+            📋 20个附件映射关系
+            <button class="btn btn-outline" style="padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="resetRanges()">↩ 重置默认</button>
+          </label>
+          <div class="mapping-section" id="rangesEditor">
+            <p style="color: var(--text-secondary); font-size: 0.85rem;">加载中...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== 右侧：输出预览 ======== -->
+    <div class="card">
+      <div class="card-header">📤 输出预览</div>
+      <div class="card-body">
+        <div id="placeholder">
+          <p style="color: var(--text-secondary); text-align: center; padding: 2rem;">
+            上传文件并点击"生成文档"后显示预览
+          </p>
+        </div>
+
+        <div id="outputArea" style="display:none;">
+          <div class="stats" id="statsArea" style="display:grid;">
+            <div class="stat-card">
+              <div class="stat-number" id="statImages">0</div>
+              <div class="stat-label">图片数</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="statAttachments">0</div>
+              <div class="stat-label">附件组</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="statDuration">0ms</div>
+              <div class="stat-label">耗时</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="statRange">-</div>
+              <div class="stat-label">图片范围</div>
+            </div>
+          </div>
+
+          <div class="tab-bar">
+            <div class="tab active" onclick="switchTab(this, 'preview')">👁️ 预览</div>
+            <div class="tab" onclick="switchTab(this, 'markdown')">📝 Markdown</div>
+          </div>
+
+          <div class="preview-card markdown-body" id="tab-preview">
+            <div id="markdownPreview"></div>
+          </div>
+
+          <div class="preview-card" id="tab-markdown" style="display:none;">
+            <pre id="markdownRaw"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== 底部：操作按钮 ======== -->
+    <div class="full-width">
+      <div class="card">
+        <div class="card-body" style="text-align: center;">
+          <div id="statusArea"></div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-large" onclick="generateMarkdown()" id="btnGenerateMd">
+              📝 生成 Markdown
+            </button>
+            <button class="btn btn-success btn-large" onclick="generateWord()" id="btnGenerateWord" disabled>
+              📄 生成 Word
+            </button>
+          </div>
+          <div class="form-hint" style="margin-top: 0.5rem;">
+            提示：先生成 Markdown 预览，确认无误后再生成 Word
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 全局状态
+// ============================================================
+let docxContent = '';
+let docxTitle = '';
+let docxHeader = { text: '', hasIcon: false };
+let docxImageSizes = [];  // 保存docx中的图片尺寸
+let images = [];
+let lastMarkdown = '';
+let generatedFilePath = '';
+
+// ============================================================
+// 工具函数
+// ============================================================
+function $(id) { return document.getElementById(id); }
+
+function toChineseNum(n) {
+  const units = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+  if (n <= 10) return units[n];
+  if (n < 20) return '十' + units[n - 10];
+  if (n < 100) return units[Math.floor(n / 10)] + '十' + (n % 10 ? units[n % 10] : '');
+  return n.toString();
+}
+
+function setStatus(type, message) {
+  const area = $('statusArea');
+  area.innerHTML = `<div class="status status-${type}">${message}</div>`;
+}
+
+function switchTab(tabEl, tabId) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  $('tab-preview').style.display = tabId === 'preview' ? 'block' : 'none';
+  $('tab-markdown').style.display = tabId === 'markdown' ? 'block' : 'none';
+}
+
+// ============================================================
+// 文件上传处理
+// ============================================================
+async function handleDocxUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  setStatus('info', '⏳ 正在提取文档内容...');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/upload-docx', {
+      method: 'POST',
+      body: formData
+    });
+    const result = await resp.json();
+
+    if (result.success) {
+      docxContent = result.content;
+      docxTitle = result.title || '附件处理报告';
+      docxHeader = result.header || { text: '', hasIcon: false };
+      docxImageSizes = result.imageSizes || [];
+      
+      $('docxZone').classList.add('has-file');
+      $('docxFileName').style.display = 'block';
+      $('docxFileName').textContent = `✅ ${file.name}`;
+      
+      // 显示图片尺寸信息
+      if (docxImageSizes.length > 0) {
+        const portraitSizes = docxImageSizes.filter(s => s.orientation === 'portrait');
+        const landscapeSizes = docxImageSizes.filter(s => s.orientation === 'landscape');
+        
+        let sizeInfo = `📐 检测到 ${docxImageSizes.length} 张图片`;
+        if (portraitSizes.length > 0) {
+          const avgW = Math.round(portraitSizes.reduce((s, p) => s + p.width, 0) / portraitSizes.length);
+          const avgH = Math.round(portraitSizes.reduce((s, p) => s + p.height, 0) / portraitSizes.length);
+          sizeInfo += ` | 竖图平均: ${avgW}x${avgH}px`;
+        }
+        if (landscapeSizes.length > 0) {
+          const avgW = Math.round(landscapeSizes.reduce((s, p) => s + p.width, 0) / landscapeSizes.length);
+          const avgH = Math.round(landscapeSizes.reduce((s, p) => s + p.height, 0) / landscapeSizes.length);
+          sizeInfo += ` | 横图平均: ${avgW}x${avgH}px`;
+        }
+        
+        setStatus('success', `✅ ${sizeInfo}`);
+        console.log('DOCX图片尺寸详情:', docxImageSizes);
+      } else {
+        setStatus('success', `✅ 文档已加载: ${docxTitle}`);
+      }
+    } else {
+      setStatus('error', `❌ ${result.error}`);
+    }
+  } catch (err) {
+    setStatus('error', '❌ 上传失败: ' + err.message);
+  }
+}
+
+async function handleImageUpload(input) {
+  const files = Array.from(input.files);
+  if (files.length === 0) return;
+
+  setStatus('info', `⏳ 正在上传 ${files.length} 张图片到服务器...`);
+
+  try {
+    // 直接上传原始文件到服务器，由服务器处理并存储为临时文件
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append('files', file);
+    }
+    
+    const resp = await fetch('/api/upload-images', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!resp.ok) {
+      const errData = await resp.json();
+      throw new Error(errData.error || `HTTP ${resp.status}`);
+    }
+    
+    const result = await resp.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || '上传失败');
+    }
+    
+    // 合并到全局数组 - 只保留轻量元数据，不含base64
+    const newImages = result.images.map(img => ({
+      index: images.length + img.index,
+      name: img.name,
+      size: img.size,
+      filepath: img.filepath  // 服务器上的临时文件路径
+    }));
+    
+    images = images.concat(newImages);
+    
+    $('imageZone').classList.add('has-file');
+    $('imageCount').style.display = 'block';
+    $('imageCount').textContent = `✅ 已上传 ${images.length} 张图片`;
+    
+    // 显示缩略图（使用服务器返回的路径，通过一个简单的缩略图API）
+    const grid = $('imageGrid');
+    grid.innerHTML = '';
+    images.forEach((img, i) => {
+      const imgEl = document.createElement('img');
+      imgEl.className = 'image-thumb';
+      // 使用文件路径作为缩略图源（通过静态文件服务）
+      imgEl.src = `/temp/${img.filepath.split(/[/\\]/).pop()}`;
+      imgEl.title = `${img.name}\n大小: ${formatSize(img.size)}`;
+      imgEl.onclick = () => {
+        imgEl.classList.toggle('selected');
+        images[i].selected = imgEl.classList.contains('selected');
+      };
+      grid.appendChild(imgEl);
+    });
+    
+    const totalSize = images.reduce((sum, img) => sum + (img.size || 0), 0);
+    setStatus('success', `✅ 已上传 ${images.length} 张图片 (共 ${formatSize(totalSize)})`);
+  } catch (err) {
+    setStatus('error', '❌ 上传失败: ' + err.message);
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + 'KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+}
+
+// ============================================================
+// 映射规则管理（参照便携版实现 - 可编辑映射关系）
+// ============================================================
+
+// 当前映射规则（从后端加载）
+let currentRanges = [];
+
+// 默认映射规则（与后端一致）
+const DEFAULT_RANGES = [
+  { start: 0, end: 2, idx: 0 },
+  { start: 3, end: 18, idx: 1 },
+  { start: 19, end: 20, idx: 2 },
+  { start: 21, end: 24, idx: 3 },
+  { start: 25, end: 25, idx: 4 },
+  { start: 26, end: 46, idx: 5 },
+  { start: 47, end: 48, idx: 6 },
+  { start: 49, end: 49, idx: 7 },
+  { start: 50, end: 50, idx: 8 },
+  { start: 51, end: 51, idx: 9 },
+  { start: 52, end: 52, idx: 10 },
+  { start: 53, end: 53, idx: 11 },
+  { start: 54, end: 54, idx: 12 },
+  { start: 55, end: 55, idx: 13 },
+  { start: 56, end: 56, idx: 14 },
+  { start: 57, end: 57, idx: 15 },
+  { start: 58, end: 58, idx: 16 },
+  { start: 59, end: 59, idx: 17 },
+  { start: 60, end: 60, idx: 18 },
+  { start: 61, end: 61, idx: 19 }
+];
+
+/**
+ * 从后端加载映射规则
+ */
+async function loadRanges() {
+  try {
+    const res = await fetch('/api/ranges');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.ranges) currentRanges = data.ranges;
+    renderRangesEditor();
+  } catch (err) {
+    console.warn('[加载映射规则] 使用本地默认值, 原因:', err.message);
+    currentRanges = DEFAULT_RANGES.map(r => ({ ...r }));
+    renderRangesEditor();
+  }
+}
+
+/**
+ * 渲染可编辑的映射关系编辑器
+ */
+function renderRangesEditor() {
+  const container = $('rangesEditor');
+  if (!container) return;
+
+  container.innerHTML = currentRanges.map((range, i) => `
+    <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem; font-size:0.82rem;">
+      <span style="min-width:42px; font-weight:600; color:var(--primary);">附件${i+1}</span>
+      <input type="number" min="0" value="${range.start}" 
+             style="width:56px; padding:0.2rem 0.4rem; font-size:0.8rem; text-align:center; border:1px solid var(--border); border-radius:4px;"
+             onchange="updateRange(${i}, 'start', this.value)">
+      <span style="color:var(--text-secondary);">~</span>
+      <input type="number" min="0" value="${range.end}" 
+             style="width:56px; padding:0.2rem 0.4rem; font-size:0.8rem; text-align:center; border:1px solid var(--border); border-radius:4px;"
+             onchange="updateRange(${i}, 'end', this.value)">
+    </div>
+  `).join('');
+}
+
+/**
+ * 更新单个映射规则并同步到后端
+ */
+function updateRange(index, field, value) {
+  const num = parseInt(value, 10);
+  if (isNaN(num) || num < 0) return;
+  currentRanges[index][field] = num;
+  saveRanges();
+}
+
+/**
+ * 保存映射规则到后端
+ */
+async function saveRanges() {
+  try {
+    await fetch('/api/ranges', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ranges: currentRanges })
+    });
+  } catch (err) {
+    console.warn('保存映射规则失败（服务器未响应，规则仅在本地生效）:', err.message);
+  }
+}
+
+/**
+ * 重置映射规则为默认值
+ */
+async function resetRanges() {
+  try {
+    const res = await fetch('/api/ranges/reset', { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      currentRanges = data.ranges;
+      renderRangesEditor();
+      setStatus('success', '✅ 映射规则已重置为默认');
+    }
+  } catch (err) {
+    // 本地重置为默认值
+    currentRanges = DEFAULT_RANGES.map(r => ({ ...r }));
+    renderRangesEditor();
+    setStatus('success', '✅ 映射规则已本地重置为默认（服务器未连接）');
+  }
+}
+
+// 监听自定义名称变化（更新映射显示）
+$('customNames').addEventListener('input', function() {
+  // 仅用于显示，映射规则由 rangesEditor 管理
+});
+
+// ============================================================
+// 步骤1：生成 Markdown
+// ============================================================
+async function generateMarkdown() {
+  if (images.length === 0) {
+    setStatus('error', '❌ 请先上传图片');
+    return;
+  }
+
+  const btn = $('btnGenerateMd');
+  btn.disabled = true;
+  const startTime = Date.now();
+  setStatus('running', '⏳ 正在生成 Markdown...');
+
+  try {
+    const customNames = $('customNames').value;
+    
+    const resp = await fetch('/api/generate-markdown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docContent: docxContent,
+        docTitle: docxTitle,
+        attachmentNames: customNames,
+        customRanges: currentRanges,
+        images: images,
+        header: docxHeader
+      })
+    });
+    
+    const result = await resp.json();
+
+    if (result.success) {
+      lastMarkdown = result.markdown;
+      // 保存页眉信息供生成Word时使用
+      if (result.header) {
+        docxHeader = result.header;
+      }
+      
+      const duration = Date.now() - startTime;
+      
+      // 显示结果
+      $('placeholder').style.display = 'none';
+      $('outputArea').style.display = 'block';
+      
+      $('statImages').textContent = images.length;
+      $('statAttachments').textContent = result.attachments.length;
+      $('statDuration').textContent = `${duration}ms`;
+      $('statRange').textContent = `0-${images.length - 1}`;
+      
+      $('markdownPreview').innerHTML = marked.parse(lastMarkdown);
+      $('markdownRaw').textContent = lastMarkdown;
+      
+      // 启用 Word 生成按钮
+      $('btnGenerateWord').disabled = false;
+      
+      setStatus('success', `✅ Markdown 已生成 (${duration}ms)，请检查预览`);
+    } else {
+      setStatus('error', `❌ ${result.error}`);
+    }
+  } catch (err) {
+    setStatus('error', '❌ 生成失败: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ============================================================
+// 步骤2：生成 Word
+// ============================================================
+async function generateWord() {
+  if (!lastMarkdown) {
+    setStatus('error', '❌ 请先生成 Markdown');
+    return;
+  }
+
+  const btn = $('btnGenerateWord');
+  btn.disabled = true;
+  setStatus('running', '⏳ 正在转换为 Word...');
+
+  try {
+    const resp = await fetch('/api/convert-word', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        markdown: lastMarkdown,
+        images: images,
+        header: docxHeader,
+        docxImageSizes: docxImageSizes  // 传递docx中的图片尺寸
+      })
+    });
+    
+    const result = await resp.json();
+
+    if (result.success) {
+      // 触发下载
+      const link = document.createElement('a');
+      link.href = `/api/download/${result.outputPath.split(/[/\\]/).pop()}`;
+      link.download = `附件处理报告_${Date.now()}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setStatus('success', '✅ Word 文档已生成并下载');
+    } else {
+      setStatus('error', `❌ ${result.error}`);
+    }
+  } catch (err) {
+    setStatus('error', '❌ 转换失败: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ============================================================
+// 下载 Markdown
+// ============================================================
+function downloadMarkdown() {
+  if (!lastMarkdown) {
+    setStatus('error', '❌ 请先生成文档');
+    return;
+  }
+  
+  const blob = new Blob([lastMarkdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `附件处理报告_${Date.now()}.md`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// 初始化
+document.addEventListener('DOMContentLoaded', () => {
+  loadRanges();
+});
+setStatus('info', '📌 步骤：1.上传模板 2.上传图片 3.生成Markdown 4.生成Word');
+</script>
+
+</body>
+</html>

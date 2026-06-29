@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>结案审批表填写工具</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 750px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #2e7d32, #1b5e20);
+      color: white;
+      padding: 20px 24px;
+    }
+    
+    .header h1 {
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
+    
+    .header p {
+      font-size: 13px;
+      opacity: 0.85;
+    }
+    
+    .content {
+      padding: 24px;
+    }
+    
+    .tab-bar {
+      display: flex;
+      border-bottom: 1px solid #e0e0e0;
+      margin-bottom: 20px;
+    }
+    
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 14px;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    
+    .tab.active {
+      border-bottom-color: #2e7d32;
+      color: #2e7d32;
+      font-weight: 500;
+    }
+    
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    .form-group {
+      margin-bottom: 16px;
+    }
+    
+    label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: #202124;
+      font-size: 13px;
+    }
+    
+    .file-select {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    .file-path {
+      flex: 1;
+      padding: 10px 12px;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      font-size: 13px;
+      background: #f8f9fa;
+      color: #5f6368;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    textarea {
+      width: 100%;
+      min-height: 200px;
+      padding: 12px;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      resize: vertical;
+    }
+    
+    textarea:focus {
+      outline: none;
+      border-color: #2e7d32;
+      box-shadow: 0 0 0 2px rgba(46,125,50,0.2);
+    }
+    
+    .preview-area {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    
+    .preview-item {
+      display: flex;
+      font-size: 12px;
+      padding: 4px 0;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .preview-label {
+      width: 90px;
+      color: #5f6368;
+      font-weight: 500;
+    }
+    
+    .preview-value {
+      flex: 1;
+      color: #202124;
+      word-break: break-all;
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    
+    button {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary {
+      background: #2e7d32;
+      color: white;
+      flex: 1;
+    }
+    
+    .btn-primary:hover {
+      background: #1b5e20;
+    }
+    
+    .btn-outline {
+      background: white;
+      border: 1px solid #2e7d32;
+      color: #2e7d32;
+    }
+    
+    .btn-outline:hover {
+      background: #e8f5e9;
+    }
+    
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      display: none;
+    }
+    
+    .status.success {
+      background: #e8f5e9;
+      color: #2e7d32;
+      display: block;
+    }
+    
+    .status.error {
+      background: #ffebee;
+      color: #c62828;
+      display: block;
+    }
+    
+    .footer {
+      padding: 16px 24px;
+      border-top: 1px solid #e8eaed;
+      font-size: 12px;
+      color: #5f6368;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📋 结案审批表填写工具</h1>
+      <p>自动识别案件信息，填写Excel审批表，保持原格式不变</p>
+    </div>
+    
+    <div class="content">
+      <div class="tab-bar">
+        <div class="tab active" data-tab="ai">🤖 AI报告提取</div>
+        <div class="tab" data-tab="manual">✏️ 手动填写</div>
+      </div>
+      
+      <!-- AI提取模式 -->
+      <div id="tab-ai" class="tab-content active">
+        <div class="form-group">
+          <label>📄 大模型输出的报告内容</label>
+          <textarea id="aiInput" placeholder="粘贴大模型输出的报告内容，支持 Markdown表格、键值对、JSON 等格式"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label>📁 Excel模板文件</label>
+          <div class="file-select">
+            <input type="text" id="templatePath" class="file-path" placeholder="请选择Excel模板文件">
+            <button id="selectTemplateBtn" class="btn-outline" style="flex:0; padding: 10px 16px;">浏览</button>
+          </div>
+        </div>
+        
+        <div class="preview-area" id="aiPreviewArea" style="display: none;">
+          <div class="preview-label" style="margin-bottom: 8px; font-weight: 600;">📊 识别结果：</div>
+          <div class="preview-grid" id="aiPreviewGrid"></div>
+        </div>
+        
+        <div class="button-group">
+          <button id="previewBtn" class="btn-outline">👁️ 预览识别</button>
+          <button id="fillBtn" class="btn-primary">📝 生成Excel</button>
+        </div>
+      </div>
+      
+      <!-- 手动填写模式 -->
+      <div id="tab-manual" class="tab-content">
+        <div class="form-group">
+          <label>📁 Excel模板文件</label>
+          <div class="file-select">
+            <input type="text" id="templatePath2" class="file-path" placeholder="请选择Excel模板文件">
+            <button id="selectTemplateBtn2" class="btn-outline" style="flex:0; padding: 10px 16px;">浏览</button>
+          </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label>保单号</label>
+            <input type="text" id="policyNo" class="file-path" style="width:100%;" placeholder="T260314800116400137332">
+          </div>
+          <div class="form-group">
+            <label>保险险种</label>
+            <input type="text" id="insuranceType" class="file-path" style="width:100%;" placeholder="新业态人员责任险">
+          </div>
+          <div class="form-group">
+            <label>投保人</label>
+            <input type="text" id="insured" class="file-path" style="width:100%;" placeholder="淮安金蜻蜓网络科技">
+          </div>
+          <div class="form-group">
+            <label>被保险人/伤者</label>
+            <input type="text" id="insuredPerson" class="file-path" style="width:100%;" placeholder="李小子、王攀">
+          </div>
+          <div class="form-group">
+            <label>出险时间</label>
+            <input type="text" id="accidentDate" class="file-path" style="width:100%;" placeholder="2026.03.14 07:17">
+          </div>
+          <div class="form-group">
+            <label>出险地点</label>
+            <input type="text" id="accidentLocation" class="file-path" style="width:100%;" placeholder="深圳福田滨河大道">
+          </div>
+          <div class="form-group">
+            <label>索赔金额</label>
+            <input type="text" id="claimAmount" class="file-path" style="width:100%;" placeholder="保额上限60万">
+          </div>
+          <div class="form-group">
+            <label>赔付建议</label>
+            <input type="text" id="suggestion" class="file-path" style="width:100%;" placeholder="待治疗终结后核算">
+          </div>
+          <div class="form-group">
+            <label>受案时间</label>
+            <input type="text" id="acceptDate" class="file-path" style="width:100%;" placeholder="2026.04.01">
+          </div>
+          <div class="form-group">
+            <label>结案时间</label>
+            <input type="text" id="closeDate" class="file-path" style="width:100%;" placeholder="2026.04.16">
+          </div>
+          <div class="form-group">
+            <label>调查员</label>
+            <input type="text" id="investigator" class="file-path" style="width:100%;" placeholder="罗锦">
+          </div>
+        </div>
+        
+        <div class="button-group">
+          <button id="fillManualBtn" class="btn-primary">📝 生成Excel</button>
+        </div>
+      </div>
+      
+      <div id="status" class="status"></div>
+    </div>
+    
+    <div class="footer">
+      支持格式：Excel 2007/2010/2013/2016/2019 (.xlsx, .xls) | 保留原表格样式不变
+    </div>
+  </div>
+  
+  <script src="renderer.js"></script>
+</body>
+</html>

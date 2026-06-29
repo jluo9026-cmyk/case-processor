@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>案件处理启动器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 24px;
+    }
+    
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    
+    .header {
+      background: white;
+      border-radius: 16px;
+      padding: 24px 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .header h1 {
+      color: #1a1a2e;
+      font-size: 24px;
+    }
+    
+    .header-info {
+      color: #666;
+      font-size: 13px;
+    }
+    
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+    
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+    
+    .card-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+    
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    
+    .form-group {
+      margin-bottom: 0;
+    }
+    
+    .form-group.full-width {
+      grid-column: span 3;
+    }
+    
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: #555;
+    }
+    
+    input, textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid #e8e8e8;
+      border-radius: 10px;
+      font-size: 14px;
+      transition: all 0.3s;
+      background: #fafafa;
+    }
+    
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #667eea;
+      background: white;
+      box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+    }
+    
+    textarea {
+      min-height: 120px;
+      font-family: 'Consolas', monospace;
+      resize: vertical;
+    }
+    
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 16px;
+    }
+    
+    .tool-btn {
+      padding: 20px 12px;
+      background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+      border: 2px solid transparent;
+      border-radius: 14px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .tool-btn:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+    
+    .tool-btn:active {
+      transform: translateY(-2px);
+    }
+    
+    .tool-btn.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    
+    .tool-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+    
+    .tool-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    
+    .tool-desc {
+      font-size: 11px;
+      opacity: 0.7;
+    }
+    
+    .tool-btn.not-found {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    
+    .tool-btn.not-found:hover {
+      transform: none;
+      box-shadow: none;
+    }
+    
+    .btn-group {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+    
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+    
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+    
+    .btn-success {
+      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+      color: white;
+    }
+    
+    .btn-success:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(17, 153, 142, 0.4);
+    }
+    
+    .btn-warning {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: white;
+    }
+    
+    .status {
+      margin-top: 20px;
+      padding: 16px 20px;
+      border-radius: 12px;
+      display: none;
+      font-size: 14px;
+    }
+    
+    .status.success {
+      background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+      color: #155724;
+      display: block;
+    }
+    
+    .status.error {
+      background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+      color: #721c24;
+      display: block;
+    }
+    
+    .status.info {
+      background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
+      color: #0c5460;
+      display: block;
+    }
+    
+    .progress-bar {
+      margin-top: 16px;
+      background: #e9ecef;
+      border-radius: 10px;
+      height: 8px;
+      overflow: hidden;
+      display: none;
+    }
+    
+    .progress-bar.active {
+      display: block;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      width: 0%;
+      transition: width 0.3s;
+    }
+    
+    .tool-status {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #666;
+    }
+    
+    .log-area {
+      background: #1a1a2e;
+      color: #a8dadc;
+      padding: 16px;
+      border-radius: 10px;
+      font-family: 'Consolas', monospace;
+      font-size: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+      margin-top: 16px;
+      display: none;
+    }
+    
+    .log-area.active {
+      display: block;
+    }
+    
+    .log-line {
+      margin-bottom: 4px;
+    }
+    
+    .log-time {
+      color: #666;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <!-- 头部 -->
+  <div class="header">
+    <div>
+      <h1>📋 案件处理启动器</h1>
+      <div class="header-info">集成多个案件处理工具，统一管理，高效协作</div>
+    </div>
+    <div style="font-size: 12px; color: #999;">
+      最后保存: <span id="lastSave">-</span>
+    </div>
+  </div>
+  
+  <!-- 案件信息 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">📁 案件基本信息</div>
+      <button id="loadDataBtn" class="btn-secondary">📂 加载数据</button>
+    </div>
+    
+    <div class="form-grid">
+      <div class="form-group">
+        <label>案件编号</label>
+        <input type="text" id="caseId" placeholder="请输入案件编号">
+      </div>
+      <div class="form-group">
+        <label>保单号</label>
+        <input type="text" id="policyNo" placeholder="请输入保单号">
+      </div>
+      <div class="form-group">
+        <label>投保人</label>
+        <input type="text" id="insured" placeholder="请输入投保人">
+      </div>
+      <div class="form-group">
+        <label>伤者/被保险人</label>
+        <input type="text" id="injured" placeholder="请输入伤者/被保险人">
+      </div>
+      <div class="form-group">
+        <label>第三者</label>
+        <input type="text" id="thirdParty" placeholder="请输入第三者">
+      </div>
+      <div class="form-group">
+        <label>出险时间</label>
+        <input type="text" id="accidentDate" placeholder="请输入出险时间">
+      </div>
+      <div class="form-group full-width">
+        <label>出险地点</label>
+        <input type="text" id="accidentLocation" placeholder="请输入出险地点">
+      </div>
+      <div class="form-group full-width">
+        <label>附件清单（一行一个）</label>
+        <textarea id="attachments" placeholder="请输入附件清单，一行一个"></textarea>
+      </div>
+    </div>
+    
+    <div class="btn-group">
+      <button id="saveDataBtn" class="btn-primary">💾 保存案件数据</button>
+      <button id="clearDataBtn" class="btn-secondary">🗑️ 清空数据</button>
+    </div>
+  </div>
+  
+  <!-- 工具调用 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">🛠️ 工具调用</div>
+    </div>
+    
+    <div class="tool-grid" id="toolGrid">
+      <!-- 工具按钮将由 JS 动态生成 -->
+    </div>
+    
+    <div class="btn-group">
+      <button id="runSelectedBtn" class="btn-success">🚀 执行选中工具</button>
+      <button id="runAllBtn" class="btn-warning">⚡ 一键执行全部</button>
+      <button id="openToolsFolderBtn" class="btn-secondary">📂 打开工具目录</button>
+    </div>
+    
+    <div class="progress-bar" id="progressBar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    
+    <div class="tool-status" id="toolStatus"></div>
+    
+    <div class="log-area" id="logArea"></div>
+  </div>
+  
+  <div id="status" class="status"></div>
+</div>
+
+<script src="renderer.js"></script>
+</body>
+</html>

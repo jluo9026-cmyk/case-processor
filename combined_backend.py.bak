@@ -1,0 +1,2298 @@
+﻿"""
+案件处理启动器 - 合并后端服务
+Flask兼容层 + FastAPI异步框架
+Electron桌面应用后端
+"""
+
+import os
+import sys
+import uuid
+import socket
+import asyncio
+import threading
+import json
+import io
+import re
+import base64
+import urllib.request
+import urllib.parse
+from datetime import datetime
+from pathlib import Path
+
+# 修复 stdout/stderr 编码
+sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8', errors='replace', line_buffering=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8', errors='replace', line_buffering=True)
+sys.stdout.flush()
+sys.stderr.flush()
+
+# 加载环境变量
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+from docx import Document
+from docx.shared import Pt, Inches, RGBColor, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+# Flask兼容层
+try:
+    from werkzeug.utils import secure_filename
+    HAS_FLASK = True
+except ImportError:
+    secure_filename = lambda x: uuid.uuid4().hex + '_' + os.path.basename(x)
+    HAS_FLASK = False
+
+# ============ 路径配置 ============
+BASE_DIR = Path(__file__).parent.resolve()
+PORT_FILE = BASE_DIR / '.backend_port'
+UPLOAD_DIR = BASE_DIR / 'uploads'
+OUTPUT_DIR = BASE_DIR / 'output'
+
+# 任务管理
+JOBS = {}
+JOBS_LOCK = asyncio.Lock()
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+async def create_job(job_id, metadata=None):
+    async with JOBS_LOCK:
+        JOBS[job_id] = {
+            'id': job_id,
+            'status': 'pending',
+            'progress': 0,
+            'message': '任务已创建',
+            'created_at': datetime.now().isoformat(),
+            'started_at': None,
+            'finished_at': None,
+            'result': None,
+            'error': None,
+            'metadata': metadata or {}
+        }
+        return JOBS[job_id]
+
+
+async def update_job(job_id, **updates):
+    async with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return None
+        job.update(updates)
+        return job
+
+
+async def get_job(job_id):
+    async with JOBS_LOCK:
+        return JOBS.get(job_id)
+
+
+# ============ DeepSeek API 配置 ============
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_TIMEOUT = 120
+DEEPSEEK_CONNECT_TIMEOUT = 30
+
+SYSTEM_ROLE = """# 角色定位
+你是一位专业的保险公估报告撰写专家，精通保险公估报告的撰写规范和格式要求。
+
+# 任务说明
+根据提供的OCR识别文本、案件信息和原始文本，撰写一份完整的保险公估报告。
+
+# 报告结构要求
+1. 报告标题
+2. 案件基本信息（保单号、被保险人、出险时间等）
+3. 事故调查情况
+4. 保险责任分析
+5. 调查结论
+6. 免责声明
+7. 签名栏
+
+# 格式要求
+1. 使用正式、专业的语言
+2. 段落清晰，逻辑严谨
+3. 事实描述准确客观
+4. 法律依据引用准确
+5. 结论明确
+
+# 注意事项
+1. 不要编造事实，只基于提供的信息撰写
+2. 如果信息不足，明确标注"信息缺失"
+3. 保持客观中立的态度
+4. 使用规范的保险公估行业术语"""
+
+MODEL_TEMPERATURE = 0.7
+MODEL_TOP_P = 0.95
+MODEL_MAX_TOKENS = 4000
+
+# ============ OCR 配置 ============
+BAIDU_API_KEY = os.getenv("BAIDU_API_KEY")
+BAIDU_SECRET_KEY = os.getenv("BAIDU_SECRET_KEY")
+_baidu_access_token = None
+
+# ============ Qwen-VL 配置 ============
+QWEN_VL_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
+QWEN_VL_BASE_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+# ============ PaddleOCR配置 ============
+PADDLE_OCR_TIMEOUT = 60
+PADDLE_OCR = None
+HAS_PADDLE = False
+
+
+def _init_paddle_ocr():
+    """初始化PaddleOCR"""
+    global PADDLE_OCR, HAS_PADDLE
+    if PADDLE_OCR is not None:
+        return True
+    try:
+        os.environ['FLAGS_use_mkldnn'] = '0'
+        os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+        from paddleocr import PaddleOCR
+        print('[OCR] 正在初始化 PaddleOCR...')
+        PADDLE_OCR = PaddleOCR(lang='ch')
+        HAS_PADDLE = True
+        print('[OCR] PaddleOCR 初始化成功')
+        return True
+    except Exception as e:
+        print(f'[OCR] PaddleOCR 初始化失败: {e}')
+        PADDLE_OCR = None
+        HAS_PADDLE = False
+        return False
+
+
+if not BAIDU_API_KEY or not BAIDU_SECRET_KEY:
+    print('[WARNING] OCR API Key 未配置')
+else:
+    print('[INFO] OCR API Key 已配置')
+
+
+def _get_baidu_token() -> str:
+    """获取百度OCR Token"""
+    global _baidu_access_token
+    if _baidu_access_token:
+        return _baidu_access_token
+
+    if not BAIDU_API_KEY or not BAIDU_SECRET_KEY:
+        raise ValueError("OCR API Key 未配置")
+
+    token_url = "https://aip.baidubce.com/oauth/2.0/token"
+    params_str = f"grant_type=client_credentials&client_id={BAIDU_API_KEY}&client_secret={BAIDU_SECRET_KEY}"
+
+    try:
+        url = f"{token_url}?{params_str}"
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            _baidu_access_token = data["access_token"]
+            print(f'[OCR] 获取百度 OCR Token 成功')
+            return _baidu_access_token
+    except Exception as e:
+        print(f'[OCR] 获取Token失败: {e}')
+        raise
+
+
+def _call_baidu_ocr(image_base64: str) -> dict:
+    """调用百度OCR API - 通用文字识别（高精度版）"""
+    token = _get_baidu_token()
+    ocr_url = f"https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic?access_token={token}"
+
+    try:
+        post_data = f"image={urllib.parse.quote(image_base64)}".encode('utf-8')
+        req = urllib.request.Request(ocr_url, data=post_data, method='POST')
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result_data = json.loads(resp.read().decode('utf-8'))
+            return {"status": 200, "data": result_data}
+    except Exception as e:
+        print(f'[OCR] 调用百度 OCR API 失败: {e}')
+        raise
+
+
+async def _call_qwen_vl(image_base64: str) -> str:
+    """调用Qwen-VL视觉模型"""
+    try:
+        import httpx
+        headers = {
+            "Authorization": f"Bearer {QWEN_VL_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "qwen-vl-plus",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
+                        {"type": "text", "text": "请详细描述这张图片的内容，包括文字、场景、人物、物品等所有可见信息。"}
+                    ]
+                }
+            ]
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{QWEN_VL_BASE_URL}/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data and "choices" in data and len(data["choices"]) > 0:
+                return data["choices"][0]["message"]["content"]
+            return None
+    except Exception as e:
+        print(f'[Qwen-VL] 调用失败: {e}')
+        return None
+
+
+def _classify_image(image_base64: str) -> str:
+    """简单图像分类 - 判断是文字型还是视觉型"""
+    try:
+        from PIL import Image
+        image_data = base64.b64decode(image_base64)
+        image = Image.open(io.BytesIO(image_data))
+        gray_image = image.convert('L')
+        width, height = gray_image.size
+
+        high_contrast_count = 0
+        total_pixels = width * height
+
+        for y in range(0, height, 10):
+            for x in range(0, width, 10):
+                pixel = gray_image.getpixel((x, y))
+                if pixel < 30 or pixel > 225:
+                    high_contrast_count += 1
+
+        contrast_ratio = high_contrast_count / ((width // 10) * (height // 10))
+        if contrast_ratio > 0.3:
+            return "text"
+        else:
+            return "visual"
+    except Exception as e:
+        print(f'[Image Classify] 分类失败: {e}')
+        return "text"
+
+
+def _merge_information(
+    investigation_content: dict = None,
+    ocr_text: str = "",
+    visual_descriptions: str = "",
+    paddle_text: str = ""
+) -> str:
+    """合并多源信息"""
+    merged = []
+
+    if investigation_content:
+        if investigation_content.get('scene_investigation'):
+            merged.append(f"\n{investigation_content['scene_investigation']}")
+        if investigation_content.get('police_station_record'):
+            merged.append(f"\n{investigation_content['police_station_record']}")
+        if investigation_content.get('traffic_police_record'):
+            merged.append(f"\n{investigation_content['traffic_police_record']}")
+        if investigation_content.get('hospital_diagnosis'):
+            merged.append(f"\n{investigation_content['hospital_diagnosis']}")
+
+    if ocr_text and ocr_text.strip():
+        merged.append(f"\nOCR\n{ocr_text}")
+
+    if visual_descriptions and visual_descriptions.strip():
+        merged.append(f"\n{visual_descriptions}")
+
+    if paddle_text and paddle_text.strip():
+        merged.append(f"\n{paddle_text}")
+
+    return "\n".join(merged)
+
+
+# ============ FastAPI 应用 ============
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.concurrency import iterate_in_threadpool
+
+import tempfile
+
+# 文件上传大小限制（50MB）
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+class FileSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method == 'POST':
+            content_length = request.headers.get('content-length')
+            if content_length and int(content_length) > MAX_FILE_SIZE:
+                return JSONResponse(
+                    content={'success': False, 'error': f'文件大小超过限制（最大 {MAX_FILE_SIZE // (1024 * 1024)}MB）'},
+                    status_code=413
+                )
+        return await call_next(request)
+
+app = FastAPI(title='案件处理启动器', version='2.0.0', max_request_size=MAX_FILE_SIZE)
+
+app.add_middleware(FileSizeLimitMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
+
+# 模块未加载（报告标准化和MD转DOCX功能已移除）
+
+try:
+    pass
+
+
+
+
+except ImportError:
+    pass
+
+
+# 模板存储
+_template_store = {}
+
+ALLOWED_EXTENSIONS = {'docx'}
+
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def parse_word_template(content):
+    """解析Word模板"""
+    doc = Document(io.BytesIO(content))
+    sections = []
+    paragraphs = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        paragraphs.append({
+            'text': text,
+            'style': para.style.name if para.style else 'Normal'
+        })
+        if para.style.name.startswith('Heading') or (
+            para.text.startswith('#') or
+            (para.text.startswith('第') and '章' in para.text)
+        ):
+            sections.append({'title': text, 'level': para.style.name})
+    return {'sections': sections, 'paragraphs': paragraphs}
+
+
+# ============ 报告生成 (FastAPI) ============
+_generated_reports = {}
+_template_storage = {}
+
+
+@app.post('/api/generate-report')
+async def generate_report(request: Request):
+    """生成报告 - 支持多图片OCR+视觉分析+笔录信息"""
+    try:
+        form = await request.form()
+        text = form.get('text', '')
+        case_type = form.get('case_type', '')
+        template_id = form.get('template_id')
+        scene_investigation = form.get('scene_investigation', '')
+        police_station_record = form.get('police_station_record', '')
+        traffic_police_record = form.get('traffic_police_record', '')
+        hospital_diagnosis = form.get('hospital_diagnosis', '')
+
+        images_data = []
+        statement_data = []
+        files = []
+        for key in form.keys():
+            if key.startswith('images_') or key.startswith('file_'):
+                value = form.get(key)
+                if hasattr(value, 'read'):
+                    files.append(value)
+
+        for f in files:
+            try:
+                content = await f.read()
+                if content:
+                    images_data.append({
+                        'name': getattr(f, 'filename', f'image_{len(images_data)}.png'),
+                        'data': content
+                    })
+            except Exception as e:
+                print(f'[Upload] 读取文件失败: {e}')
+
+        for key in form.keys():
+            if key.startswith('statement_'):
+                value = form.get(key)
+                if hasattr(value, 'read'):
+                    try:
+                        content = await value.read()
+                        if content:
+                            statement_data.append({
+                                'name': getattr(value, 'filename', f'statement_{len(statement_data)}.png'),
+                                'data': content
+                            })
+                    except Exception as e:
+                        print(f'[Upload] 读取笔录文件失败: {e}')
+
+        job_id = str(uuid.uuid4())[:12]
+        await create_job(job_id, metadata={
+            'text': text,
+            'case_type': case_type,
+            'template_id': template_id,
+            'images_count': len(images_data),
+            'statements_count': len(statement_data),
+            'scene_investigation': scene_investigation,
+            'police_station_record': police_station_record,
+            'traffic_police_record': traffic_police_record,
+            'hospital_diagnosis': hospital_diagnosis
+        })
+
+        asyncio.create_task(_background_report_job(
+            job_id, text, images_data, statement_data,
+            template_id, case_type,
+            scene_investigation, police_station_record,
+            traffic_police_record, hospital_diagnosis
+        ))
+
+        return JSONResponse(content={
+            'success': True,
+            'job_id': job_id,
+            'message': '报告生成任务已创建'
+        })
+    except Exception as e:
+        raise HTTPException(500, f'创建任务失败: {str(e)}')
+
+
+@app.get('/api/run/{job_id}')
+async def get_run_status(job_id: str):
+    job = await get_job(job_id)
+    if not job:
+        raise HTTPException(404, '任务不存在')
+    return {
+        'success': True,
+        'job_id': job_id,
+        'status': job['status'],
+        'progress': job.get('progress', 0),
+        'message': job.get('message', ''),
+        'error': job.get('error'),
+        'result': job.get('result')
+    }
+
+
+# 任务超时设置
+MAX_JOB_RUNTIME = 300  # 5分钟
+
+
+async def _background_report_job(
+    job_id, text, images_data, statement_data,
+    template_id, case_type,
+    scene_investigation, police_station_record,
+    traffic_police_record, hospital_diagnosis
+):
+    await update_job(job_id, status='running', started_at=datetime.now().isoformat(), progress=5, message='开始处理')
+    job_start_time = datetime.now()
+
+    try:
+        await update_job(job_id, progress=10, message='正在识别图片...')
+
+        ocr_results = []
+        visual_results = []
+
+        def _is_job_timed_out():
+            return (datetime.now() - job_start_time).total_seconds() > MAX_JOB_RUNTIME
+
+        # ============ OCR处理 ============
+        async def _process_single_image(index, img_info, job_id, job_start_time):
+            """处理单张图片的OCR和视觉分析"""
+            if _is_job_timed_out():
+                return None, None
+
+            img_base64 = base64.b64encode(img_info['data']).decode('utf-8')
+            ocr_result = None
+            visual_result = None
+
+            # OCR识别 - 按优先级尝试多个OCR服务
+            print(f'[DEBUG] 开始处理图片: {img_info["name"]}, 大小: {len(img_info["data"])} bytes')
+            
+            # 1. 首先尝试百度OCR
+            if BAIDU_API_KEY and BAIDU_SECRET_KEY:
+                print(f'[DEBUG] 尝试百度OCR识别...')
+                try:
+                    ocr_resp = await asyncio.to_thread(_call_baidu_ocr, img_base64)
+                    print(f'[DEBUG] 百度OCR响应: {ocr_resp}')
+                    if ocr_resp.get('status') == 200:
+                        if 'words_result' in ocr_resp.get('data', {}):
+                            word_list = ocr_resp['data']['words_result']
+                            text_parts = [w['words'] for w in word_list if w.get('words')]
+                            if text_parts:
+                                ocr_result = {'name': img_info['name'], 'text': '\n'.join(text_parts)}
+                                print(f'[DEBUG] 百度OCR成功，识别到 {len(text_parts)} 行文字')
+                            else:
+                                print(f'[DEBUG] 百度OCR返回空结果')
+                        else:
+                            print(f'[DEBUG] 百度OCR响应中没有words_result字段')
+                    else:
+                        print(f'[DEBUG] 百度OCR返回状态码: {ocr_resp.get("status")}')
+                except Exception as e:
+                    print(f'[OCR] 百度OCR处理 {img_info["name"]} 失败: {e}')
+                    import traceback
+                    print(traceback.format_exc())
+            
+            # 2. 如果百度OCR失败，使用千问VL进行文字识别（PaddleOCR仅用于笔录图片）
+            if not ocr_result and QWEN_VL_API_KEY:
+                print(f'[DEBUG] 百度OCR失败，尝试千问VL识别...')
+                try:
+                    description = await _call_qwen_vl(img_base64)
+                    if description:
+                        ocr_result = {'name': img_info['name'], 'text': description}
+                        print(f'[Qwen-VL] 识别 {img_info["name"]} 成功，长度 {len(ocr_result["text"])}')
+                    else:
+                        print(f'[DEBUG] 千问VL返回空结果')
+                except Exception as e:
+                    print(f'[Qwen-VL] 处理 {img_info["name"]} 失败: {e}')
+                    import traceback
+                    print(traceback.format_exc())
+            
+            # 如果所有OCR都失败，记录警告
+            if not ocr_result:
+                print(f'[WARNING] 所有OCR服务都未能识别图片: {img_info["name"]}')
+
+            # Qwen-VL视觉分析（独立于OCR，用于描述图片内容）
+            if QWEN_VL_API_KEY:
+                try:
+                    img_type = await asyncio.to_thread(_classify_image, img_base64)
+                    if img_type == 'visual':
+                        description = await _call_qwen_vl(img_base64)
+                        if description:
+                            visual_result = {'name': img_info['name'], 'description': description}
+                except Exception as e:
+                    print(f'[视觉] 处理 {img_info["name"]} 失败: {e}')
+
+            return ocr_result, visual_result
+
+        # 处理所有图片
+        if images_data:
+            await update_job(job_id, progress=10, message=f'正在处理 {len(images_data)} 张图片...')
+            print(f'[OCR] 开始处理{len(images_data)}张图片: {[img["name"] for img in images_data]}')
+            tasks = [
+                _process_single_image(i, img_info, job_id, job_start_time)
+                for i, img_info in enumerate(images_data)
+            ]
+            results = await asyncio.gather(*tasks)
+            for ocr_result, visual_result in results:
+                if ocr_result:
+                    ocr_results.append(ocr_result)
+                    print(f'[OCR] 识别 {ocr_result["name"]} 成功，长度 {len(ocr_result["text"])}')
+                if visual_result:
+                    visual_results.append(visual_result)
+            print(f'[OCR] 识别成功 {len(ocr_results)} 张，失败 {len(images_data)-len(ocr_results)} 张')
+            await update_job(job_id, progress=50, message=f'已完成 {len(ocr_results)}/{len(images_data)} 张图片识别')
+
+        # ============ 笔录处理 + PaddleOCR处理 ============
+        async def _process_single_statement(idx, img_info, job_id, job_start_time):
+            if _is_job_timed_out():
+                return None, None
+            try:
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                temp_filename = f'paddle_temp_{uuid.uuid4().hex}.png'
+                temp_path = os.path.join(temp_dir, temp_filename)
+                temp_path = os.path.abspath(temp_path)
+
+                with open(temp_path, 'wb') as f:
+                    f.write(img_info['data'])
+
+                try:
+                    if HAS_PADDLE or _init_paddle_ocr():
+                        result = PADDLE_OCR.ocr(temp_path, cls=False)
+                        if result and result[0]:
+                            lines = [line[1][0] for line in result[0] if line[1] and line[1][0]]
+                            if lines:
+                                paddle_text = '\n'.join(lines)
+                                print(f'[PaddleOCR] 识别 {img_info["name"]} 成功，{len(lines)} 行')
+                                return {'name': img_info['name'], 'text': paddle_text}, None
+                except Exception as e:
+                    print(f'[PaddleOCR] 识别 {img_info["name"]} 失败: {e}')
+
+                # PaddleOCR失败，回退到百度OCR
+                try:
+                    with open(temp_path, 'rb') as f:
+                        img_data = f.read()
+                    img_base64 = base64.b64encode(img_data).decode('utf-8')
+                    ocr_resp = _call_baidu_ocr(img_base64)
+                    if ocr_resp.get('status') == 200 and 'words_result' in ocr_resp.get('data', {}):
+                        word_list = ocr_resp['data']['words_result']
+                        text_parts = [w['words'] for w in word_list if w.get('words')]
+                        if text_parts:
+                            return {'name': img_info['name'], 'text': '\n'.join(text_parts)}, None
+                except Exception as e2:
+                    print(f'[OCR回退] 处理 {img_info["name"]} 失败: {e2}')
+
+                return None, None
+            except Exception as e:
+                print(f'[Statement] 处理 {img_info["name"]} 失败: {e}')
+                return None, None
+            finally:
+                try:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                except:
+                    pass
+
+        # 处理笔录图片
+        paddle_results = []
+        if statement_data:
+            await update_job(job_id, progress=55, message=f'正在处理 {len(statement_data)} 张笔录图片...')
+            print(f'[PaddleOCR] 开始处理{len(statement_data)}张笔录图片')
+            statement_tasks = [
+                _process_single_statement(i, img_info, job_id, job_start_time)
+                for i, img_info in enumerate(statement_data)
+            ]
+            statement_results = await asyncio.gather(*statement_tasks)
+            for paddle_result, _ in statement_results:
+                if paddle_result:
+                    paddle_results.append(paddle_result)
+            print(f'[PaddleOCR] 处理完成: {len(paddle_results)}/{len(statement_data)}')
+
+        # ============ 合并信息 ============
+        await update_job(job_id, progress=65, message='正在合并信息...')
+
+        ocr_text = '\n'.join([r['text'] for r in ocr_results]) if ocr_results else ''
+        visual_text = '\n'.join([r['description'] for r in visual_results]) if visual_results else ''
+        paddle_text = '\n'.join([r['text'] for r in paddle_results]) if paddle_results else ''
+
+        investigation_content = {
+            'scene_investigation': scene_investigation,
+            'police_station_record': police_station_record,
+            'traffic_police_record': traffic_police_record,
+            'hospital_diagnosis': hospital_diagnosis
+        }
+
+        combined_text = _merge_information(
+            investigation_content=investigation_content,
+            ocr_text=ocr_text,
+            visual_descriptions=visual_text,
+            paddle_text=paddle_text
+        )
+
+        # ============ 生成Word报告 ============
+        if _is_job_timed_out():
+            raise TimeoutError(f'任务超时（{MAX_JOB_RUNTIME}秒）')
+
+        await update_job(job_id, progress=75, message='正在生成 Word 报告...')
+
+        report_id = str(uuid.uuid4())[:12]
+        output_filename = f'report_{report_id}.docx'
+        output_path = OUTPUT_DIR / output_filename
+
+        # 获取模板内容
+        content = None
+        case_data = {}
+        if template_id and template_id in _template_storage:
+            template_info = _template_storage[template_id]
+            content = template_info.get('content')
+            case_data = template_info.get('data', {})
+
+        if content:
+            if HAS_MODULES:
+                temp_template_path = OUTPUT_DIR / f'temp_template_{uuid.uuid4().hex}.docx'
+                temp_template_path.write_bytes(content)
+                formatter = UniversalDocxFormatter()
+                result_path, structure = formatter.convert_with_template(
+                    str(temp_template_path), content, str(output_path), combined_text
+                )
+                if temp_template_path.exists():
+                    temp_template_path.unlink()
+            else:
+                dst = Document(io.BytesIO(content))
+                if combined_text.strip():
+                    dst.add_paragraph()
+                    dst.add_heading('报告内容', level=1)
+                    for line in combined_text.strip().split('\n'):
+                        stripped = line.strip()
+                        if stripped:
+                            dst.add_paragraph(stripped)
+                dst.save(str(output_path))
+                structure = {}
+        else:
+            if HAS_MODULES:
+                formatter = UniversalDocxFormatter()
+                result_path, structure = formatter.convert_with_content(
+                    case_type, case_data, combined_text, str(output_path)
+                )
+            else:
+                doc = Document()
+                doc.add_heading(f'{case_type}调查报告', 0)
+                doc.add_paragraph(f'报告编号: {report_id}')
+                doc.add_paragraph(f'生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M")}')
+                if combined_text.strip():
+                    doc.add_paragraph()
+                    doc.add_heading('报告内容', level=1)
+                    for line in combined_text.strip().split('\n'):
+                        stripped = line.strip()
+                        if stripped:
+                            doc.add_paragraph(stripped)
+                doc.save(str(output_path))
+                structure = {}
+
+        if _is_job_timed_out():
+            raise TimeoutError(f'任务超时（{MAX_JOB_RUNTIME}秒）')
+
+        await update_job(job_id, progress=90, message='正在生成最终报告...')
+
+        # 调用DeepSeek API生成报告
+        final_report = None
+        if DEEPSEEK_API_KEY:
+            try:
+                prompt = _generate_report_prompt(ocr_text, combined_text, text)
+                final_report = await _call_deepseek_api(prompt)
+            except Exception as api_err:
+                print(f'[DEBUG] DeepSeek API 调用失败: {api_err}')
+
+        if not final_report:
+            final_report = generate_report_with_content(combined_text, ocr_text, text)
+
+        _generated_reports[report_id] = {
+            'id': report_id,
+            'filename': output_filename,
+            'path': str(output_path),
+            'case_type': case_type,
+            'created': datetime.now().isoformat(),
+        }
+
+        response_data = {
+            'success': True,
+            'report_id': report_id,
+            'output_file': output_filename,
+            'message': '报告生成完成',
+            'total_images': len(images_data),
+            'ocr_count': len(ocr_results),
+            'combined_text': combined_text,
+            'final_report': final_report
+        }
+
+        await update_job(job_id, status='completed', progress=100, message='报告生成完成', result=response_data, finished_at=datetime.now().isoformat())
+
+    except TimeoutError as te:
+        print(f'[REPORT JOB] 任务超时 {job_id}: {te}')
+        await update_job(job_id, status='failed', progress=100, message='', error=str(te), finished_at=datetime.now().isoformat())
+    except Exception as e:
+        print(f'[REPORT JOB] 任务失败 {job_id}: {e}')
+        import traceback
+        traceback.print_exc()
+        await update_job(job_id, status='failed', progress=100, message='', error=str(e), finished_at=datetime.now().isoformat())
+
+
+@app.post('/api/generate-docx')
+async def generate_docx(request: Request):
+    """将 markdown 转换为 DOCX 报告"""
+    try:
+        content_type = request.headers.get('content-type', '')
+        markdown_text = ''
+        template_id = None
+        output_name = ''
+
+        if 'multipart/form-data' in content_type:
+            form = await request.form()
+            markdown_text = form.get('markdown_report', '')
+            template_id = form.get('template_id') or None
+            output_name = form.get('output_name', '')
+        else:
+            try:
+                body = await request.json()
+                markdown_text = body.get('markdown_report', '') or body.get('text', '')
+                template_id = body.get('template_id')
+                output_name = body.get('output_name', '')
+            except Exception:
+                pass
+
+        if not markdown_text.strip():
+            raise HTTPException(400, '报告内容不能为空')
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_filename = f'report_{timestamp}.docx'
+        if output_name:
+            safe_name = re.sub(r'[^\w\u4e00-\u9fff\-]', '_', output_name)
+            output_filename = f'report_{safe_name}_{timestamp}.docx'
+
+        output_path = OUTPUT_DIR / output_filename
+
+        # 使用模板或直接生成
+        content = None
+        if template_id and template_id in _template_storage:
+            template_info = _template_storage[template_id]
+            content = template_info.get('content')
+
+        if content and HAS_MODULES:
+            temp_template_path = OUTPUT_DIR / f'temp_template_{uuid.uuid4().hex}.docx'
+            temp_template_path.write_bytes(content)
+            formatter = UniversalDocxFormatter()
+            result_path, structure = formatter.convert_with_template(
+                str(temp_template_path), content, str(output_path), markdown_text
+            )
+            if temp_template_path.exists():
+                temp_template_path.unlink()
+        else:
+            doc = Document()
+            for line in markdown_text.split('\n'):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith('# '):
+                    doc.add_heading(stripped[2:], 0)
+                elif stripped.startswith('## '):
+                    doc.add_heading(stripped[3:], 1)
+                elif stripped.startswith('### '):
+                    doc.add_heading(stripped[4:], 2)
+                elif stripped.startswith('- ') or stripped.startswith('* '):
+                    doc.add_paragraph(stripped, style='List Bullet')
+                else:
+                    doc.add_paragraph(stripped)
+            doc.save(str(output_path))
+
+        report_id = str(uuid.uuid4())[:12]
+        _generated_reports[report_id] = {
+            'id': report_id,
+            'filename': output_filename,
+            'path': str(output_path),
+            'created': datetime.now().isoformat(),
+        }
+
+        return JSONResponse(content={
+            'success': True,
+            'report_id': report_id,
+            'output_file': output_filename,
+            'message': 'DOCX 生成成功'
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f'生成 DOCX 失败: {str(e)}')
+
+
+@app.get('/api/download/{report_id}')
+async def download_report(report_id: str):
+    """下载生成的报告"""
+    report = _generated_reports.get(report_id)
+    if not report:
+        raise HTTPException(404, '报告不存在')
+    filepath = report.get('path')
+    if not filepath or not os.path.exists(filepath):
+        raise HTTPException(404, '文件不存在')
+    filename = report.get('filename', 'report.docx')
+    return FileResponse(filepath, filename=filename)
+
+
+@app.post('/api/template/upload')
+async def upload_template_new(request: Request):
+    """上传模板（前端调用的端点）"""
+    print('[DEBUG] 收到模板上传请求')
+    try:
+        result = await upload_template(request)
+        print(f'[DEBUG] 模板上传成功: {result}')
+        return result
+    except Exception as e:
+        print(f'[ERROR] 模板上传失败: {e}')
+        import traceback
+        print(traceback.format_exc())
+        return JSONResponse(content={
+            'success': False,
+            'error': f'上传模板失败: {str(e)}'
+        }, status_code=500)
+
+
+@app.delete('/api/template/{template_id}')
+async def delete_template_api(template_id: str):
+    """删除模板"""
+    if template_id in _template_storage:
+        del _template_storage[template_id]
+        return {'success': True}
+    else:
+        raise HTTPException(404, '模板不存在')
+
+
+@app.post('/api/upload-template')
+async def upload_template(request: Request):
+    """上传Word模板"""
+    print('[DEBUG] upload_template 开始处理')
+    try:
+        print('[DEBUG] 尝试获取表单数据')
+        form = await request.form()
+        print(f'[DEBUG] 表单键名: {list(form.keys())}')
+        
+        file = None
+        for key in form.keys():
+            value = form.get(key)
+            print(f'[DEBUG] 键 {key} 的类型: {type(value)}')
+            if hasattr(value, 'read'):
+                file = value
+                print(f'[DEBUG] 找到文件: {getattr(file, "filename", "未知文件名")}')
+                break
+
+        if not file:
+            print('[ERROR] 未找到上传文件')
+            return JSONResponse(content={
+                'success': False,
+                'error': '未找到上传文件'
+            }, status_code=400)
+
+        print('[DEBUG] 读取文件内容')
+        content = await file.read()
+        print(f'[DEBUG] 文件大小: {len(content)} bytes')
+        
+        if not content:
+            print('[ERROR] 文件内容为空')
+            return JSONResponse(content={
+                'success': False,
+                'error': '文件内容为空'
+            }, status_code=400)
+
+        try:
+            print('[DEBUG] 解析Word模板')
+            template_data = parse_word_template(content)
+            print(f'[DEBUG] 解析成功: {len(template_data["sections"])} 个章节, {len(template_data["paragraphs"])} 个段落')
+        except Exception as parse_error:
+            print(f'[ERROR] 解析Word文件失败: {parse_error}')
+            return JSONResponse(content={
+                'success': False,
+                'error': f'解析Word文件失败: {str(parse_error)}'
+            }, status_code=400)
+
+        template_id = str(uuid.uuid4())[:8]
+        print(f'[DEBUG] 生成模板ID: {template_id}')
+
+        _template_storage[template_id] = {
+            'id': template_id,
+            'name': getattr(file, 'filename', 'template.docx'),
+            'content': content,
+            'data': template_data,
+            'upload_time': datetime.now().isoformat()
+        }
+
+        response_data = {
+            'success': True,
+            'template_id': template_id,
+            'template_name': getattr(file, 'filename', 'template.docx'),
+            'sections_count': len(template_data['sections']),
+            'paragraphs_count': len(template_data['paragraphs'])
+        }
+        print(f'[DEBUG] 返回成功响应: {response_data}')
+        return JSONResponse(content=response_data)
+    except Exception as e:
+        print(f'[ERROR] 上传模板异常: {e}')
+        import traceback
+        print(traceback.format_exc())
+        return JSONResponse(content={
+            'success': False,
+            'error': f'上传模板失败: {str(e)}'
+        }, status_code=500)
+
+
+@app.get('/api/templates')
+async def list_templates():
+    """列出所有已上传的模板"""
+    templates = []
+    for tid, t in _template_storage.items():
+        templates.append({
+            'id': tid,
+            'name': t['name'],
+            'upload_time': t['upload_time'],
+            'sections_count': len(t['data'].get('sections', [])),
+            'paragraphs_count': len(t['data'].get('paragraphs', []))
+        })
+    return {'success': True, 'templates': templates}
+
+
+@app.post('/api/analyze')
+async def analyze_document(file: UploadFile = File(...)):
+    """分析文档结构（前端调用的端点）"""
+    try:
+        return await parse_docx(file)
+    except HTTPException as e:
+        return JSONResponse(
+            content={'success': False, 'error': e.detail},
+            status_code=e.status_code
+        )
+    except Exception as e:
+        print(f'[ERROR] 分析文档失败: {e}')
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            content={'success': False, 'error': f'文档分析失败: {str(e)}'},
+            status_code=500
+        )
+
+
+@app.post('/api/parse-docx')
+async def parse_docx(file: UploadFile = File(...)):
+    """解析DOCX文件"""
+    if not file.filename or not allowed_file(file.filename):
+        raise HTTPException(400, '请上传 .docx 文件')
+
+    unique_filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+    upload_path = UPLOAD_DIR / unique_filename
+
+    try:
+        content = await file.read()
+        upload_path.write_bytes(content)
+
+        doc = Document(io.BytesIO(content))
+        
+        if HAS_MODULES:
+            parser = DocumentParser()
+            parse_result = parser.parse(doc)
+            formatter = UniversalDocxFormatter()
+            structure = formatter.analyze_structure(parse_result)
+            
+            return {
+                'success': True,
+                'filename': file.filename,
+                'structure': {
+                    'main_title': structure.get('main_title'),
+                    'chapters': [ch.get('title') for ch in structure.get('chapters', [])],
+                    'key_info': structure.get('key_info', {}),
+                    'attachments': structure.get('attachments', [])
+                },
+                'metadata': parse_result.get('metadata', {}),
+                'tables_count': len(parse_result.get('tables', [])),
+                'paragraphs_count': len([p for p in parse_result.get('paragraphs', []) if not p.get('is_empty')])
+            }
+        else:
+            chapters = []
+            paragraphs = []
+            key_info = {}
+            
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    paragraphs.append(text)
+                    if (para.style.name.startswith('Heading') or 
+                        text.startswith('第') and '章' in text or
+                        text.startswith('一、') or text.startswith('二、') or 
+                        text.startswith('三、') or text.startswith('四、') or
+                        text.startswith('五、') or text.startswith('六、') or
+                        text.startswith('七、')):
+                        chapters.append(text)
+            
+            return {
+                'success': True,
+                'filename': file.filename,
+                'structure': {
+                    'main_title': paragraphs[0] if paragraphs else '',
+                    'chapters': chapters[:10],
+                    'key_info': key_info,
+                    'attachments': []
+                },
+                'metadata': {},
+                'tables_count': len(doc.tables),
+                'paragraphs_count': len(paragraphs),
+                'preview': '\n'.join(paragraphs[:20]) if len(paragraphs) > 20 else '\n'.join(paragraphs)
+            }
+    finally:
+        if upload_path.exists():
+            upload_path.unlink()
+
+
+# 预设模板对应的真实 .docx 模板文件路径映射
+TEMPLATE_DOCX_MAP = {
+    'preset_1': BASE_DIR / 'template_preset_1.docx',
+    'preset_2': BASE_DIR / 'template_preset_2.docx',
+    'preset_3': BASE_DIR / 'template_preset_3.docx',
+}
+
+
+def _is_chapter_heading(text: str) -> bool:
+    """判断段落文本是否为章节标题"""
+    if not text:
+        return False
+    patterns = [
+        '第' in text and '章' in text,
+        text.startswith('一、'), text.startswith('二、'),
+        text.startswith('三、'), text.startswith('四、'),
+        text.startswith('五、'), text.startswith('六、'),
+        text.startswith('七、'), text.startswith('八、'),
+        text.startswith('九、'), text.startswith('十、'),
+    ]
+    return any(patterns)
+
+
+def _chapter_matches(title_a: str, title_b: str) -> bool:
+    """判断两个章节标题是否匹配（模糊匹配）"""
+    a = re.sub(r'[（(].*?[）)]', '', title_a).strip()
+    b = re.sub(r'[（(].*?[）)]', '', title_b).strip()
+    return a == b or a in b or b in a
+
+
+def _merge_content_into_template(template_doc: Document, source_bytes: bytes, output_path: Path):
+    """将上传文档的内容按章节合并到模板文档中
+    
+    通过 Document().save() 重建模板 ZIP，保留模板的完整格式结构。
+    用上传文档的内容按章节匹配填充到模板对应位置。
+    模板自身的案例内容被替换为上传文档的内容。
+    如果上传文档缺少某章节，则保留模板原有的章节内容。
+    上传文档中有但模板中没有的章节追加到末尾。
+    """
+    import zipfile
+    import io as _io
+    from lxml import etree
+    from copy import deepcopy
+    
+    nsp = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    nsp_r = {'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
+    
+    # 第一步：通过 Document().save() 重建模板 ZIP
+
+    template_buffer = _io.BytesIO()
+    template_doc.save(template_buffer)
+    template_zip = zipfile.ZipFile(template_buffer, 'r')
+
+    template_files = {}
+    for item in template_zip.infolist():
+        template_files[item.filename] = template_zip.read(item.filename)
+    template_zip.close()
+    
+    # 读取上传文档 ZIP 内容
+    source_zip = zipfile.ZipFile(_io.BytesIO(source_bytes))
+    source_files = {}
+    for item in source_zip.infolist():
+        source_files[item.filename] = source_zip.read(item.filename)
+    source_zip.close()
+    
+    # 第二步：解析模板 document.xml 提取章节标题索引
+    tpl_doc_xml = etree.fromstring(template_files.get('word/document.xml', b''))
+    body = tpl_doc_xml.find('.//w:body', nsp)
+    
+    # 找到模板中所有段落，标记哪些是章节标题
+    # 遍历 body 的子元素，找到 w:p 元素
+    tpl_chapter_indices = []  # 段落索引（在 body 中的顺序）
+    all_tpl_paras = body.findall('w:p', nsp) if body is not None else []
+    
+    for idx, para_elem in enumerate(all_tpl_paras):
+        # 获取段落文本
+        texts = para_elem.findall('.//w:t', nsp)
+        para_text = ''.join(t.text or '' for t in texts).strip()
+        if _is_chapter_heading(para_text):
+            tpl_chapter_indices.append({'index': idx, 'title': para_text})
+    
+    # 第三步：解析上传文档 document.xml 提取所有章节
+    source_doc_xml = etree.fromstring(source_files['word/document.xml'])
+    source_body = source_doc_xml.find('.//w:body', nsp)
+    
+    source_chapters = []  # [(title, [paragraph_element_index])]
+    current_title = None
+    current_indices = []
+    
+    if source_body is not None:
+        all_source_paras = source_body.findall('w:p', nsp)
+        for idx, para_elem in enumerate(all_source_paras):
+            texts = para_elem.findall('.//w:t', nsp)
+            para_text = ''.join(t.text or '' for t in texts).strip()
+            if not para_text:
+                continue
+            if _is_chapter_heading(para_text):
+                if current_title is not None:
+                    source_chapters.append((current_title, current_indices))
+                current_title = para_text
+                current_indices = []
+            else:
+                current_indices.append(idx)
+        if current_title is not None:
+            source_chapters.append((current_title, current_indices))
+    
+    # 统计章节数
+    chapters_found = len(source_chapters)
+    
+    # 第四步：构建新文档 - 以模板为基础
+    # 克隆模板 document.xml
+    new_doc_xml = deepcopy(tpl_doc_xml)
+    new_body = new_doc_xml.find('.//w:body', nsp)
+    
+    if new_body is not None:
+        # 找到模板的 sectPr（页面设置）
+        tpl_sectPr = new_body.find('w:sectPr', nsp)
+        
+        # 获取上传文档的所有段落元素
+        if source_body is not None:
+            source_all_paras_list = source_body.findall('w:p', nsp)
+        
+        # ===== 保存模板的章节间内容（标题、引言、声明、章节内容等）=====
+        tpl_chapter_para_indices = {ch['index'] for ch in tpl_chapter_indices}
+        tpl_pre_chapter_paras = []     # 第一个章节前的段落
+        tpl_post_chapter_paras = []    # 最后一个章节后的段落
+        tpl_chapter_content = {}       # {章节标题: [内容段落]} — 章节标题和下一章节标题之间的内容
+        
+        if tpl_chapter_indices:
+            first_ch_idx = tpl_chapter_indices[0]['index']
+            last_ch_idx = tpl_chapter_indices[-1]['index']
+            
+            # 收集章节间内容：以章节标题为 key
+            current_ch_title = None
+            current_ch_content = []
+            for idx, pe in enumerate(all_tpl_paras):
+                if idx in tpl_chapter_para_indices:
+                    if current_ch_title is not None:
+                        tpl_chapter_content[current_ch_title] = current_ch_content
+                    # 找到章节标题的文本
+                    texts = pe.findall('.//w:t', nsp)
+                    current_ch_title = ''.join(t.text or '' for t in texts).strip()
+                    current_ch_content = []
+                elif idx < first_ch_idx:
+                    tpl_pre_chapter_paras.append(deepcopy(pe))
+                elif idx > last_ch_idx:
+                    tpl_post_chapter_paras.append(deepcopy(pe))
+                else:
+                    current_ch_content.append(deepcopy(pe))
+            if current_ch_title is not None:
+                tpl_chapter_content[current_ch_title] = current_ch_content
+        else:
+            for idx, pe in enumerate(all_tpl_paras):
+                if idx not in tpl_chapter_para_indices:
+                    tpl_pre_chapter_paras.append(deepcopy(pe))
+        
+        # 清除 body 中除 sectPr 外的所有内容
+        children_to_remove = []
+        for child in new_body:
+            if child.tag != f'{{{nsp["w"]}}}sectPr':
+                children_to_remove.append(child)
+        for child in children_to_remove:
+            new_body.remove(child)
+        
+        # 重新构建：模板章节标题 + 上传文档对应内容
+        # 记录已匹配的上传文档章节标题
+        matched_source_titles = set()
+        
+        # 添加模板的非章节前导内容（标题、引言、声明等）
+        for pe in tpl_pre_chapter_paras:
+            new_body.append(pe)
+        
+
+        for ch_info in tpl_chapter_indices:
+            ch_title = ch_info['title']
+            ch_para_index = ch_info['index']
+            
+            # 从模板获取该章节标题的段落元素
+            tpl_heading_elem = all_tpl_paras[ch_para_index] if ch_para_index < len(all_tpl_paras) else None
+            if tpl_heading_elem is not None:
+                new_body.append(deepcopy(tpl_heading_elem))
+            
+            # 查找上传文档中匹配的章节
+            matched = False
+            for src_title, src_indices in source_chapters:
+                if _chapter_matches(src_title, ch_title):
+                    matched = True
+                    matched_source_titles.add(src_title)
+                    # 复制上传文档该章节的所有段落
+                    for pi in src_indices:
+                        if pi < len(source_all_paras_list):
+                            new_body.append(deepcopy(source_all_paras_list[pi]))
+                    break
+            
+            # 如果没有匹配的章节，保留模板原有的章节内容
+            if not matched:
+                tpl_content_paras = tpl_chapter_content.get(ch_title, [])
+                if tpl_content_paras:
+                    for pe in tpl_content_paras:
+                        new_body.append(pe)
+                else:
+                    empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
+                    empty_r = etree.SubElement(empty_p, f'{{{nsp["w"]}}}r')
+                    empty_t = etree.SubElement(empty_r, f'{{{nsp["w"]}}}t')
+                    empty_t.text = '（此章节内容待补充）'
+                    empty_t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+        
+        # 添加上传文档中有但模板中没有的额外章节
+        if source_body is not None:
+            for src_title, src_indices in source_chapters:
+                if src_title not in matched_source_titles:
+                    # 添加章节标题（从上传文档复制）
+                    # 找到上传文档中该章节标题的段落
+                    for idx, para_elem in enumerate(source_all_paras_list):
+                        texts = para_elem.findall('.//w:t', nsp)
+                        para_text = ''.join(t.text or '' for t in texts).strip()
+                        if para_text == src_title:
+                            new_body.append(deepcopy(para_elem))
+                            break
+                    # 添加章节内容
+                    for pi in src_indices:
+                        if pi < len(source_all_paras_list):
+                            new_body.append(deepcopy(source_all_paras_list[pi]))
+        
+        # 添加模板的非章节后置内容（声明、备注等）
+        for pe in tpl_post_chapter_paras:
+            new_body.append(pe)
+        
+
+        # 确保 sectPr 在 body 末尾
+        if tpl_sectPr is not None:
+            new_body.append(deepcopy(tpl_sectPr))
+    
+    # 第五步：构建输出 ZIP
+    output_buffer = _io.BytesIO()
+    
+    with zipfile.ZipFile(output_buffer, 'w', zipfile.ZIP_DEFLATED) as oz:
+        for name, data in template_files.items():
+            if name == 'word/document.xml':
+                new_data = etree.tostring(new_doc_xml, xml_declaration=True, encoding='UTF-8', standalone=True)
+                oz.writestr(name, new_data)
+            elif name == 'word/numbering.xml':
+
+                # 使用模板自身的编号定义（保留模板的编号格式）
+                oz.writestr(name, data)
+            elif name == 'word/styles.xml':
+                # 使用模板的样式
+                oz.writestr(name, data)
+            else:
+                oz.writestr(name, data)
+    
+    # 写入输出文件
+    output_buffer.seek(0)
+    with open(str(output_path), 'wb') as f:
+        f.write(output_buffer.read())
+    
+    final_doc = Document(str(output_path))
+    return final_doc, chapters_found, chapters_found
+
+
+@app.post('/api/convert')
+async def convert_document(file: UploadFile = File(...), template_id: str = Form('')):
+    """转换文档格式 - 使用真实 .docx 模板"""
+    if not file.filename or not allowed_file(file.filename):
+        raise HTTPException(400, '请上传 .docx 文件')
+
+    unique_filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+    upload_path = UPLOAD_DIR / unique_filename
+    output_filename = f"{uuid.uuid4().hex}_formatted_report.docx"
+    output_path = OUTPUT_DIR / output_filename
+
+    try:
+        content = await file.read()
+        upload_path.write_bytes(content)
+
+        template_name = '标准格式'
+        chapters_found = 0
+        chapters_auto = 0
+
+        # 如果选择了预设模板且有对应的真实 .docx 模板文件
+        if template_id and template_id in TEMPLATE_DOCX_MAP:
+            template_path = TEMPLATE_DOCX_MAP[template_id]
+            if template_path.exists():
+                preset = PRESET_TEMPLATES.get(template_id, {})
+                template_name = preset.get('name', '标准模板')
+                
+                # 加载真实模板文件并通过 Document().save() 重建
+                template_doc = Document(str(template_path))
+
+                
+                # 将上传文档内容合并到模板中
+                new_doc, chapters_found, chapters_filled = _merge_content_into_template(template_doc, content, output_path)
+                
+                summary = {
+                    'chapters_found': chapters_found,
+                    'chapters_auto_generated': chapters_auto,
+                    'template_used': template_name
+                }
+            else:
+                # 模板文件不存在，回退
+                print(f'[WARNING] 模板文件不存在: {template_path}，使用默认格式')
+                template_name = '标准格式（模板文件未找到）'
+                doc = Document(io.BytesIO(content))
+                new_doc = Document()
+                new_doc.add_heading('标准化报告', 0)
+                for para in doc.paragraphs:
+                    text = para.text.strip()
+                    if not text:
+                        continue
+                    if para.style.name.startswith('Heading') or _is_chapter_heading(text):
+                        chapters_found += 1
+                        new_doc.add_heading(text, level=1)
+                    else:
+                        new_doc.add_paragraph(text)
+                new_doc.save(str(output_path))
+                summary = {
+                    'chapters_found': chapters_found,
+                    'chapters_auto_generated': 0,
+                    'template_used': template_name
+                }
+        elif HAS_MODULES:
+            formatter = UniversalDocxFormatter()
+            result_path, structure = formatter.convert(str(upload_path), str(output_path))
+
+            post_processor = PostProcessor()
+            summary = post_processor.generate_summary(structure)
+        else:
+            doc = Document(io.BytesIO(content))
+            
+            new_doc = Document()
+            new_doc.add_heading('标准化报告', 0)
+            new_doc.add_paragraph(f'报告编号: {uuid.uuid4().hex[:8]}')
+            new_doc.add_paragraph(f'生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M")}')
+            
+            chapters_found = 0
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if not text:
+                    continue
+                if para.style.name.startswith('Heading') or _is_chapter_heading(text):
+                    chapters_found += 1
+                    new_doc.add_heading(text, level=1)
+                else:
+                    new_doc.add_paragraph(text)
+            
+            new_doc.save(str(output_path))
+            summary = {
+                'chapters_found': chapters_found,
+                'chapters_auto_generated': 0
+            }
+
+        report_id = str(uuid.uuid4())[:12]
+        _generated_reports[report_id] = {
+            'id': report_id,
+            'filename': output_filename,
+            'path': str(output_path),
+            'created': datetime.now().isoformat(),
+        }
+
+        return {
+            'success': True,
+            'output_file': output_filename,
+            'report_id': report_id,
+            'summary': summary,
+            'template_name': template_name
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            'success': False,
+            'error': f'文档转换失败: {str(e)}'
+        }
+    finally:
+        if upload_path.exists():
+            upload_path.unlink()
+
+
+@app.post('/api/template/{template_id}/apply')
+async def apply_template_api(template_id: str, file: UploadFile = File(...)):
+    """应用模板到文档"""
+    if not file.filename or not allowed_file(file.filename):
+        raise HTTPException(400, '请上传 .docx 文件')
+
+    if template_id not in _template_storage:
+        raise HTTPException(404, '模板不存在')
+
+    unique_filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+    upload_path = UPLOAD_DIR / unique_filename
+    output_filename = f"{uuid.uuid4().hex}_formatted_report.docx"
+    output_path = OUTPUT_DIR / output_filename
+
+    try:
+        content = await file.read()
+        upload_path.write_bytes(content)
+
+        template = _template_storage[template_id]
+        content_data = template['content']
+        
+        if HAS_MODULES:
+            formatter = UniversalDocxFormatter()
+            result_path, structure = formatter.convert_with_template(
+                str(upload_path),
+                content_data,
+                str(output_path)
+            )
+            post_processor = PostProcessor()
+            summary = post_processor.generate_summary(structure)
+        else:
+            doc = Document(io.BytesIO(content_data))
+            original_doc = Document(io.BytesIO(content))
+            for para in original_doc.paragraphs:
+                if para.text.strip():
+                    doc.add_paragraph(para.text)
+            doc.save(str(output_path))
+            structure = {}
+            summary = {'chapters_found': 0, 'chapters_auto_generated': 0}
+
+        return {
+            'success': True,
+            'output_file': output_filename,
+            'summary': summary,
+            'template_name': template['name']
+        }
+    finally:
+        if upload_path.exists():
+            upload_path.unlink()
+
+
+@app.post('/api/template/upload_std')
+async def upload_standard_template(template: UploadFile = File(...)):
+    """上传标准模板"""
+    if not template.filename.endswith('.docx'):
+        raise HTTPException(400, '请上传 .docx 文件')
+
+    content = await template.read()
+    template_data = parse_word_template(content)
+    template_id = str(uuid.uuid4())[:8]
+
+    _template_store[template_id] = {
+        'id': template_id,
+        'name': template.filename,
+        'content': content,
+        'data': template_data,
+        'upload_time': datetime.now().isoformat(),
+    }
+
+    return {
+        'success': True,
+        'template_id': template_id,
+        'template_name': template.filename,
+        'sections_count': len(template_data['sections']),
+        'paragraphs_count': len(template_data['paragraphs']),
+    }
+
+
+@app.get('/api/template/list_std')
+async def list_standard_templates():
+    """列出标准模板"""
+    templates = []
+    for tid, t in _template_store.items():
+        templates.append({
+            'id': tid,
+            'name': t['name'],
+            'upload_time': t['upload_time'],
+            'sections_count': len(t['data'].get('sections', [])),
+            'paragraphs_count': len(t['data'].get('paragraphs', []))
+        })
+    return {'success': True, 'templates': templates}
+
+
+# ============ 辅助函数 ============
+
+def _generate_report_prompt(ocr_text: str, case_info: str, original_text: str) -> str:
+    """生成DeepSeek API的提示词"""
+    has_ocr = ocr_text and ocr_text.strip()
+    has_original = original_text and original_text.strip()
+
+    prompt = f"""=== OCR识别文本 ===
+{ocr_text if has_ocr else "无OCR识别文本"}
+
+=== 案件信息 ===
+{case_info if case_info.strip() else "无案件信息"}
+
+=== 原始文本 ===
+{original_text if has_original else "无原始文本"}
+"""
+    return prompt
+
+
+async def _call_deepseek_api(prompt: str) -> str:
+    """调用 DeepSeek API 生成报告"""
+    try:
+        import httpx
+        print(f'[DeepSeek] 调用 API，提示词长度: {len(prompt)}')
+
+        timeout_config = httpx.Timeout(
+            DEEPSEEK_TIMEOUT,
+            connect=DEEPSEEK_CONNECT_TIMEOUT,
+            read=DEEPSEEK_TIMEOUT,
+            write=60
+        )
+
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
+            resp = await client.post(
+                f"{DEEPSEEK_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_ROLE},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": MODEL_TEMPERATURE,
+                    "top_p": MODEL_TOP_P,
+                    "max_tokens": MODEL_MAX_TOKENS
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if data and "choices" in data and len(data["choices"]) > 0:
+                content = data["choices"][0]["message"]["content"]
+                print(f'[DeepSeek] API 返回成功，长度: {len(content)}')
+                return content
+
+            print(f'[DeepSeek] API 返回异常: {data}')
+            return None
+
+    except httpx.TimeoutException:
+        print(f'[DeepSeek] API 超时（{DEEPSEEK_TIMEOUT}秒）')
+        return None
+    except Exception as e:
+        print(f'[DeepSeek] API 调用失败: {e}')
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def generate_disclaimer():
+    """生成免责声明"""
+    return """
+免责声明：
+本报告仅供内部参考使用，不构成任何法律建议。报告中的信息基于提供的材料进行分析，
+如有不准确之处，请以原始文件为准。本报告未经授权不得用于任何商业目的。
+"""
+
+
+def generate_signature(surveyor_name=""):
+    """生成签名栏"""
+    name = surveyor_name if surveyor_name else "________"
+    today = datetime.now().strftime("%Y年%m月%d日")
+    return f"""
+调查员签名：{name}
+日期：{today}
+
+（本报告共 X 页）
+"""
+
+
+def generate_report_with_content(combined_text, ocr_text, original_text):
+    """生成报告内容（不使用AI时的后备方案）"""
+    report = ""
+    report += "保险公估调查报告\n"
+    report += "=" * 50 + "\n\n"
+
+    report += "一、案件基本信息\n"
+    report += "-" * 30 + "\n"
+    report += f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+
+    report += "二、调查情况\n"
+    report += "-" * 30 + "\n"
+    if combined_text.strip():
+        report += combined_text + "\n\n"
+    else:
+        report += "无调查信息\n\n"
+
+    report += "三、保险责任分析\n"
+    report += "-" * 30 + "\n"
+    report += "根据调查情况，正在进行责任分析...\n\n"
+
+    report += "四、调查结论\n"
+    report += "-" * 30 + "\n"
+    report += "待补充\n\n"
+
+    report += generate_disclaimer()
+    report += generate_signature("")
+
+    return report
+
+
+# ============ 预设模板 ============
+PRESET_TEMPLATES = {
+    'preset_1': {
+        'id': 'preset_1',
+        'name': '模板一：王玉香案件调查报告',
+        'type': 'preset',
+        'description': '标准保险公估调查报告格式',
+        'content': '''关于被保险人{{insured_name}}调查报告
+
+一、案件基本情况
+1、保险单内容
+1）保 险 人：{{insurance_company}}
+2）被保险人：{{insured_name}}
+3）保 单 号：{{policy_no}}
+4）保险期限：{{insurance_period}}
+5）险    种：{{insurance_type}}
+6）出险时间：{{accident_time}}
+
+2、据案卷资料记载：{{case_description}}（见附件一）。
+
+二、案件相关情况的核实
+{{verification_items}}
+
+（一）事故真实性的核实
+{{investigation_content}}
+
+1、调查员前往{{investigation_location_1}}{{investigation_content_1}}
+
+2、调查员向{{interviewee}}做笔录，了解案件相关情况（见附件{{interview_attachment}}）。{{interview_content}}
+
+3、调查员前往{{investigation_location_2}}了解案件相关情况（见附件{{location_attachment}}）。{{investigation_content_2}}
+
+4、调查员前往{{investigation_location_3}}，向{{contact_person}}了解案件相关情况（见附件{{contact_attachment}}）。{{investigation_content_3}}
+
+5、调查员前往{{investigation_location_4}}了解案件相关情况（见附件{{police_attachment}}）。{{police_investigation_content}}
+
+6、调查员前往{{investigation_location_5}}调取{{medical_materials}}了解案件相关情况（见附件{{medical_attachment}}）。{{medical_investigation_content}}
+
+7、调查员对{{insured_name}}的同业投保情况进行排查（见附件{{insurance_check_attachment}}）。{{insurance_check_content}}
+
+8、后续，{{reporter}}向调查员提供了以下资料：
+（1）{{insured_name}}身份证（见附件{{attachment_1}}）
+（2）受益人身份证（见附件{{attachment_2}}）
+（3）户口本（见附件{{attachment_3}}）
+（4）接报警证明（见附件{{attachment_4}}）
+（5）村委开具的死亡证明（见附件{{attachment_5}}）
+（6）土葬证明和户籍注销证明（见附件{{attachment_6}}）
+（7）索赔申请书（见附件{{attachment_7}}）
+（8）情况声明（见附件{{attachment_8}}）
+（9）直系亲属关系证明（见附件{{attachment_9}}）
+（10）{{additional_document}}（见附件{{attachment_10}}）
+
+综上，{{summary_conclusion}}
+
+三、结论
+1、{{conclusion_1}}
+2、{{conclusion_2}}
+3、{{conclusion_3}}
+4、{{conclusion_4}}
+
+以上报告供处理赔案时参考。
+
+调查员：{{investigator}}
+审核人：{{reviewer}}
+
+{{company_name}}
+{{report_date}}
+''',
+        'fields': [
+            'insured_name', 'insurance_company', 'policy_no', 'insurance_period',
+            'insurance_type', 'accident_time', 'case_description', 'verification_items',
+            'investigation_content', 'investigation_location_1', 'investigation_content_1',
+            'interviewee', 'interview_attachment', 'interview_content',
+            'investigation_location_2', 'location_attachment', 'investigation_content_2',
+            'investigation_location_3', 'contact_person', 'contact_attachment', 'investigation_content_3',
+            'investigation_location_4', 'police_attachment', 'police_investigation_content',
+            'investigation_location_5', 'medical_materials', 'medical_attachment', 'medical_investigation_content',
+            'insurance_check_attachment', 'insurance_check_content',
+            'reporter', 'attachment_1', 'attachment_2', 'attachment_3', 'attachment_4',
+            'attachment_5', 'attachment_6', 'attachment_7', 'attachment_8', 'attachment_9',
+            'attachment_10', 'additional_document',
+            'summary_conclusion',
+            'conclusion_1', 'conclusion_2', 'conclusion_3', 'conclusion_4',
+            'investigator', 'reviewer', 'company_name', 'report_date'
+        ]
+    },
+    'preset_2': {
+        'id': 'preset_2',
+        'name': '模板二：张锋身故案调查报告',
+        'type': 'preset',
+        'description': '张锋身故案调查报告格式',
+        'content': '''被保险人{{insured_name}}身故案调查报告
+
+{{case_date}}，接{{insurance_company}}委托，要求对{{policy_no}}号{{insurance_type}}保单项下被保险人{{insured_name}}于{{accident_time}}在{{accident_location}}案进行理赔调查（见附件一）。接案后我司委派工作人员就事故情况进行了调查核实，现秉承依法、独立、客观、公正的原则将调查情况报告如下：
+
+一、保险合同主要内容（见附件二）
+{{policies_detail}}
+
+二、转案情况
+{{case_description}}
+
+三、事故真实性的调查与核实
+{{investigation_content}}
+
+四、事故原因及经过调查
+{{accident_reason}}
+
+五、事故调查重点及需要解决的问题
+{{investigation_focus}}
+
+综上，{{summary}}
+
+六、保险责任分析
+1、被保险人：{{liability_insured_name}}，与承保清单核实一致；
+2、出险时间：{{liability_accident_time}}，在保险期限内；
+3、出险地点：{{liability_accident_location}}；
+4、出险原因：{{liability_accident_cause}}；
+5、伤者身份：{{liability_victim_identity}}
+6、保险责任：{{liability_content}}
+
+七、调查结论
+{{conclusion}}
+
+八、声明
+1、本报告是根据{{insurance_company}}的委托，依照《中华人民共和国保险法》等相关法律法规，结合本次事故适用的保险合同及核查的事实而作出的；
+2、保险人提供的材料之真实性、完整性由保险人负责；
+3、被保险人提供的材料之真实性、完整性由被保险人负责；
+4、公估人仅对本报告的内容负责；
+5、本报告仅作保险公估之用途。
+
+以上报告仅供保险人作理赔参考。
+
+主办公估员：{{investigator}}
+授权签发：{{authorizer}}
+协办公估员：{{assistant_investigator}}
+
+{{company_name}}
+{{report_date}}
+''',
+        'fields': [
+            'insured_name', 'insurance_company', 'policy_no', 'insurance_type',
+            'accident_time', 'accident_location', 'case_date', 'case_description',
+            'policies_detail', 'investigation_content', 'accident_reason',
+            'investigation_focus', 'summary', 'conclusion',
+            'liability_insured_name', 'liability_accident_time', 'liability_accident_location',
+            'liability_accident_cause', 'liability_victim_identity', 'liability_content',
+            'investigator', 'authorizer', 'assistant_investigator',
+            'company_name', 'report_date'
+        ]
+    },
+    'preset_3': {
+        'id': 'preset_3',
+        'name': '模板三：胡宝林案件调查报告',
+        'type': 'preset',
+        'description': '胡宝林身故案调查报告格式',
+        'content': '''被保险人{{insured_name}}案身故案调查报告
+
+{{case_date}}，接{{insurance_company}}委托，要求对{{policy_no}}号{{insurance_type}}保单项下被保险人{{insured_name}}于{{accident_time}}{{accident_description}}案进行理赔调查（见附件一）。接案后我司委派工作人员就事故情况进行了调查核实，现秉承依法、独立、客观、公正的原则将调查情况报告如下：
+
+一、保险合同主要内容（见附件二）
+1、险 种：{{insurance_type}}
+2、保单号：{{policy_no}}
+3、投保人：{{policy_holder}}
+4、被保险人：{{insured_name}}（身份证：{{id_number}}）
+5、保额：{{insurance_amount}}
+6、保险期限：{{insurance_period}}
+7、特别约定：{{special_agreements}}
+
+二、转案情况
+{{case_description}}
+
+三、案件相关情况
+{{investigation_content}}
+
+综上，{{summary}}。
+
+四、调查结论
+{{conclusion}}
+
+以上报告仅供保险人作理赔参考。
+
+调查员：{{investigator}}
+审核员：{{reviewer}}
+
+{{company_name}}
+{{report_date}}
+''',
+        'fields': [
+            'insured_name', 'insurance_company', 'policy_no', 'insurance_type',
+            'accident_time', 'accident_description', 'case_date', 'case_description',
+            'policy_holder', 'id_number', 'insurance_amount', 'insurance_period',
+            'special_agreements', 'investigation_content', 'summary', 'conclusion',
+            'investigator', 'reviewer', 'company_name', 'report_date'
+        ]
+    }
+}
+
+
+def _get_preset_template(template_id: str) -> dict:
+    """获取预设模板"""
+    return PRESET_TEMPLATES.get(template_id)
+
+
+@app.get('/api/template/presets')
+async def list_preset_templates():
+    """列出所有预设模板"""
+    presets = []
+    for tid, t in PRESET_TEMPLATES.items():
+        presets.append({
+            'id': tid,
+            'name': t['name'],
+            'type': 'preset',
+            'description': t['description'],
+            'fields': t['fields']
+        })
+    return {'success': True, 'presets': presets}
+
+
+@app.get('/api/template/preset/{template_id}')
+async def get_preset_template_detail(template_id: str):
+    """获取预设模板详情"""
+    template = _get_preset_template(template_id)
+    if not template:
+        raise HTTPException(404, f'模板不存在: {template_id}')
+    return {'success': True, 'template': template}
+
+
+@app.post('/api/run-with-preset')
+async def run_report_with_preset(request: Request):
+    """使用AI生成保险公估调查报告"""
+    debug_log_path = str(BASE_DIR / 'backend_debug.log')
+    
+    def log_write(msg):
+        """同时写入文件和打印"""
+        print(msg)
+        try:
+            with open(debug_log_path, 'a', encoding='utf-8') as f:
+                f.write(msg + '\n')
+        except:
+            pass
+    
+    try:
+        log_write(f'\n{"="*60}')
+        log_write(f'[请求开始] 时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        
+        form = await request.form()
+        template_id = form.get('template_id', 'preset_1')
+        log_write(f'[DEBUG] 收到请求: template_id={template_id}')
+        
+        # 收集走访内容
+        scene_investigation = form.get('sceneInvestigation', '')
+        police_station_record = form.get('policeStationRecord', '')
+        traffic_police_record = form.get('trafficPoliceRecord', '')
+        hospital_record = form.get('hospitalRecord', '')
+        
+        combined_investigation = []
+        if scene_investigation:
+            combined_investigation.append(f"【走访现场】\n{scene_investigation}")
+        if police_station_record:
+            combined_investigation.append(f"【派出所调查】\n{police_station_record}")
+        if traffic_police_record:
+            combined_investigation.append(f"【交警队调查】\n{traffic_police_record}")
+        if hospital_record:
+            combined_investigation.append(f"【医院调查】\n{hospital_record}")
+        
+        investigation_text = '\n\n'.join(combined_investigation) if combined_investigation else ''
+        log_write(f'[DEBUG] 走访内容总长度: {len(investigation_text)}')
+        
+        # 收集图片并进行OCR识别
+        async def read_form_file(value):
+            """异步读取表单文件字段"""
+            try:
+                if value and hasattr(value, 'read'):
+                    content = await value.read()
+                    return content
+            except Exception as e:
+                log_write(f'[Upload] 读取文件失败: {e}')
+            return None
+        
+        # 获取所有上传的图片文件
+        image_files = []
+        statement_files = []
+        all_keys = list(form.keys())
+        log_write(f'[DEBUG] 表单所有键名: {all_keys}')
+        
+        try:
+            raw_images = form.getlist('images')
+            log_write(f'[DEBUG] getlist("images") 返回 {len(raw_images)} 个元素')
+            for i, v in enumerate(raw_images):
+                if hasattr(v, 'read'):
+                    image_files.append(v)
+                    log_write(f'[DEBUG] images[{i}] 是文件对象，文件名: {getattr(v, "filename", "未知")}')
+                else:
+                    log_write(f'[DEBUG] images[{i}] 不是文件对象，类型: {type(v)}')
+        except Exception as e:
+            log_write(f'[DEBUG] getlist("images") 失败: {e}')
+        
+        try:
+            raw_statements = form.getlist('statement_images')
+            log_write(f'[DEBUG] getlist("statement_images") 返回 {len(raw_statements)} 个元素')
+            for i, v in enumerate(raw_statements):
+                if hasattr(v, 'read'):
+                    statement_files.append(v)
+                    log_write(f'[DEBUG] statement_images[{i}] 是文件对象，文件名: {getattr(v, "filename", "未知")}')
+                else:
+                    log_write(f'[DEBUG] statement_images[{i}] 不是文件对象，类型: {type(v)}')
+        except Exception as e:
+            log_write(f'[DEBUG] getlist("statement_images") 失败: {e}')
+        
+        log_write(f'[DEBUG] 最终 image_files 数量: {len(image_files)}, statement_files 数量: {len(statement_files)}')
+        
+        # 处理图片OCR识别
+        import base64
+        ocr_results = []
+        
+        async def process_single_image(file_value, is_statement=False, index=0):
+            """处理单张图片的OCR识别"""
+            try:
+                content = await read_form_file(file_value)
+                if not content:
+                    log_write(f'[OCR] 图片内容为空，跳过')
+                    return None
+                
+                filename = getattr(file_value, 'filename', f'{"statement" if is_statement else "image"}_{index+1}.png')
+                img_base64 = base64.b64encode(content).decode('utf-8')
+                
+                log_write(f'[DEBUG] 开始识别图片: {filename}, 大小: {len(content)} bytes')
+                
+                # 1. 首先尝试百度OCR
+                if BAIDU_API_KEY and BAIDU_SECRET_KEY:
+                    log_write(f'[DEBUG] 尝试百度OCR...')
+                    try:
+                        ocr_resp = await asyncio.to_thread(_call_baidu_ocr, img_base64)
+                        log_write(f'[DEBUG] 百度OCR响应: {ocr_resp}')
+                        if ocr_resp and ocr_resp.get('status') == 200:
+                            data = ocr_resp.get('data', {})
+                            if 'words_result' in data:
+                                word_list = data['words_result']
+                                text_parts = [w['words'] for w in word_list if w.get('words')]
+                                if text_parts:
+                                    ocr_text = '\n'.join(text_parts)
+                                    log_write(f'[OCR] 识别 {filename} 成功，长度 {len(ocr_text)}')
+                                    return {
+                                        'name': filename,
+                                        'text': ocr_text,
+                                        'is_statement': is_statement
+                                    }
+                            else:
+                                log_write(f'[DEBUG] 百度OCR响应中没有words_result')
+                        else:
+                            log_write(f'[DEBUG] 百度OCR返回状态码: {ocr_resp.get("status") if ocr_resp else "None"}')
+                    except Exception as e:
+                        log_write(f'[OCR] 百度OCR处理 {filename} 失败: {e}')
+                        import traceback
+                        log_write(traceback.format_exc())
+                else:
+                    log_write(f'[OCR] 百度API未配置')
+                
+                # 2. 如果百度OCR失败，尝试千问VL
+                log_write(f'[DEBUG] 百度OCR失败，尝试千问VL...')
+                if QWEN_VL_API_KEY:
+                    try:
+                        description = await _call_qwen_vl(img_base64)
+                        if description:
+                            log_write(f'[Qwen-VL] 识别 {filename} 成功，长度 {len(description)}')
+                            return {
+                                'name': filename,
+                                'text': description,
+                                'is_statement': is_statement
+                            }
+                        else:
+                            log_write(f'[DEBUG] 千问VL返回空结果')
+                    except Exception as e:
+                        log_write(f'[Qwen-VL] 处理 {filename} 失败: {e}')
+                        import traceback
+                        log_write(traceback.format_exc())
+                else:
+                    log_write(f'[OCR] 千问VL API未配置')
+                    
+                log_write(f'[WARNING] 所有OCR服务都未能识别图片: {filename}')
+            except Exception as e:
+                log_write(f'[OCR] 图片处理异常: {e}')
+                import traceback
+                log_write(traceback.format_exc())
+            
+            return None
+        
+        # 处理所有图片
+        all_files = [(f, False, i) for i, f in enumerate(image_files)] + \
+                    [(f, True, i + len(image_files)) for i, f in enumerate(statement_files)]
+        
+        for file_value, is_statement, idx in all_files:
+            try:
+                ocr_result = await process_single_image(file_value, is_statement, idx)
+                if ocr_result:
+                    ocr_results.append(ocr_result)
+            except Exception as e:
+                log_write(f'[处理] 第{idx+1}张图片处理失败: {e}')
+        
+        log_write(f'[DEBUG] OCR识别完成: {len(ocr_results)}/{len(all_files)} 张成功')
+        
+        # 整理OCR结果
+        scene_ocr_texts = []
+        statement_ocr_texts = []
+        
+        for result in ocr_results:
+            if result['is_statement']:
+                statement_ocr_texts.append(f"【笔录{len(statement_ocr_texts)+1}】\n{result['text']}")
+            else:
+                scene_ocr_texts.append(f"【现场照片{len(scene_ocr_texts)+1}】\n{result['text']}")
+        
+        scene_ocr_combined = '\n\n'.join(scene_ocr_texts) if scene_ocr_texts else ''
+        statement_ocr_combined = '\n\n'.join(statement_ocr_texts) if statement_ocr_texts else ''
+        all_ocr_combined = scene_ocr_combined + ('\n\n' if scene_ocr_combined and statement_ocr_combined else '') + statement_ocr_combined
+        
+        log_write(f'[DEBUG] 现场照片OCR文本长度: {len(scene_ocr_combined)}')
+        log_write(f'[DEBUG] 笔录OCR文本长度: {len(statement_ocr_combined)}')
+        
+        # 检查DeepSeek API
+        if not DEEPSEEK_API_KEY:
+            return {
+                'success': False,
+                'error': 'DeepSeek API未配置，无法生成报告'
+            }
+        
+        # 获取选择的模板
+        selected_template = PRESET_TEMPLATES.get(template_id, PRESET_TEMPLATES['preset_1'])
+        template_content = selected_template['content']
+        template_name = selected_template['name']
+        template_fields = selected_template.get('fields', [])
+        
+        log_write(f'[DEBUG] 使用模板: {template_id} ({template_name})')
+        log_write(f'[DEBUG] 模板内容长度: {len(template_content)}')
+        
+        # 第一步：先对OCR内容进行数据结构化
+        if investigation_text or all_ocr_combined:
+            structure_prompt = f"""请将以下调查信息进行结构化处理，提取关键信息填入模板字段。
+
+【目标模板字段】
+{', '.join(template_fields)}
+
+【模板格式】
+{template_content}
+
+【调查走访内容】
+{investigation_text if investigation_text else "（无走访内容）"}
+
+【OCR识别内容】
+{all_ocr_combined if all_ocr_combined else "（无OCR内容）"}
+
+【结构化要求】
+1、请仔细分析调查走访内容和OCR识别内容
+2、提取关键信息填入模板的{{}}占位符位置
+3、保持模板的原有章节结构不变
+4、对于{{investigation_content}}等大段落字段，需要将相关内容整合成一个完整的段落
+5、如果某些字段在内容中没有找到，请标注"待核实"或"根据调查确定"
+6、直接输出完整的报告，不要添加其他说明
+7、严格按照模板格式，不要添加或删除章节"""
+            
+            log_write(f'[DEBUG] 开始对OCR内容进行数据结构化...')
+            log_write(f'[DEBUG] 结构化提示词长度: {len(structure_prompt)}')
+            
+            # 调用DeepSeek API进行结构化
+            report_content = await _call_deepseek_api(structure_prompt)
+            
+            if report_content:
+                log_write(f'[DEBUG] 结构化成功，报告长度: {len(report_content)}')
+            else:
+                log_write(f'[WARNING] 结构化失败，使用模板原始内容')
+                # 如果结构化失败，使用模板原始内容并替换走访内容
+                report_content = template_content
+                if investigation_text:
+                    report_content = report_content.replace('{{investigation_content}}', investigation_text)
+                if all_ocr_combined:
+                    report_content = report_content.replace('{{ocr_text}}', all_ocr_combined)
+        else:
+            # 如果没有调查内容和OCR内容，使用模板原始格式
+            log_write(f'[DEBUG] 无调查内容和OCR内容，使用模板原始格式')
+            report_content = template_content
+        
+        # 如果报告中仍有未填充的占位符，进行简单替换
+        placeholder_patterns = [
+            ('{{insured_name}}', '被保险人'),
+            ('{{insurance_company}}', '保险公司'),
+            ('{{policy_no}}', '待核实'),
+            ('{{insurance_period}}', '待核实'),
+            ('{{insurance_type}}', '待核实'),
+            ('{{accident_time}}', '待核实'),
+            ('{{case_description}}', '待核实'),
+            ('{{verification_items}}', '待核实'),
+            ('{{investigation_content}}', '待核实'),
+            ('{{summary}}', '待核实'),
+            ('{{conclusion}}', '待核实'),
+            # 保险责任分析字段
+            ('{{liability_insured_name}}', '待核实'),
+            ('{{liability_accident_time}}', '待核实'),
+            ('{{liability_accident_location}}', '待核实'),
+            ('{{liability_accident_cause}}', '待核实'),
+            ('{{liability_victim_identity}}', '待核实'),
+            ('{{liability_content}}', '待核实'),
+            ('{{investigator}}', '待填写'),
+            ('{{reviewer}}', '待填写'),
+            ('{{company_name}}', '深圳市恒泰诚信息咨询有限公司'),
+            ('{{report_date}}', datetime.now().strftime('%Y年%m月%d日')),
+        ]
+        
+        for placeholder, default_value in placeholder_patterns:
+            if placeholder in report_content:
+                report_content = report_content.replace(placeholder, default_value)
+                log_write(f'[DEBUG] 替换占位符: {placeholder} -> {default_value}')
+        
+        # 检查是否还有未替换的占位符
+        remaining = report_content.count('{{')
+        if remaining > 0:
+            log_write(f'[WARNING] 仍有 {remaining} 个未替换的占位符')
+            # 将剩余占位符替换为默认值
+            import re
+            report_content = re.sub(r'\{\{[^}]+\}\}', '待核实', report_content)
+        
+        log_write(f'[DEBUG] 最终报告长度: {len(report_content)}')
+        
+        return {
+            'success': True,
+            'report_content': report_content,
+            'template_id': template_id,
+            'template_name': template_name,
+            'used_ai_fallback': False,
+            'ocr_count': len(ocr_results),
+            'combined_text': all_ocr_combined,
+            'total_images': len(all_files),
+            'investigation_text': investigation_text
+        }
+    except Exception as e:
+        log_write(f'[ERROR] 生成报告异常: {e}')
+        import traceback
+        log_write(traceback.format_exc())
+        return {
+            'success': False,
+            'error': f'生成报告失败: {str(e)}'
+        }
+
+def _find_available_port(start=5001, end=9999):
+    """查找可用端口"""
+    for port in range(start, end + 1):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(('127.0.0.1', port))
+            s.close()
+            return port
+        except OSError:
+            continue
+    return start
+
+
+def _write_port_file(port):
+    """写入端口文件供Electron读取"""
+    PORT_FILE.write_text(str(port), encoding='utf-8')
+
+
+# ============ 启动端口 ============
+_startup_port = _find_available_port(5001, 9999)
+
+
+# ============ API 路由(FastAPI) ============
+
+@app.get('/api/health')
+async def health_check():
+    """健康检查"""
+    return {
+        'status': 'ok',
+        'service': 'combined-backend',
+        'version': '2.0.0',
+        'port': _startup_port,
+        'modules': {
+            'report_standard': False,
+            'report_generate': True
+        }
+    }
+
+
+# ============ 服务器启动 ============
+
+def _run_server(port):
+    """启动服务器"""
+    import uvicorn
+    _write_port_file(port)
+    print(f'=== 后端服务启动在端口 {port} ===')
+    print(f'=== 健康检查: http://127.0.0.1:{port}/api/health ===')
+    uvicorn.run(
+        app,
+        host='127.0.0.1',
+        port=port,
+        log_level='info',
+        access_log=False,
+        timeout_keep_alive=600
+    )
+
+
+if __name__ == '__main__':
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else _startup_port
+    _run_server(port)

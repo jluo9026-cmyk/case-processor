@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>公估报告辅助工具 - 完美目录生成器</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: #eef2f7;
+            padding: 24px;
+            color: #1e293b;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h2 {
+            margin-bottom: 20px;
+        }
+        /* 三栏布局（左：报告正文 | 中：附件资料 | 右：预览） */
+        .three-columns {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .col {
+            flex: 1;
+            min-width: 300px;
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        .col-header {
+            padding: 16px 20px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            font-weight: 600;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .col-body {
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #334155;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            font-size: 14px;
+            transition: 0.2s;
+            font-family: inherit;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        }
+        textarea {
+            min-height: 140px;
+            resize: vertical;
+            font-family: monospace;
+        }
+        .file-select {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .file-path {
+            flex: 1;
+            background: #f1f5f9;
+            font-size: 13px;
+            color: #475569;
+            padding: 10px 14px;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        button {
+            background: #3b82f6;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 40px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        button.secondary {
+            background: #f1f5f9;
+            color: #1e293b;
+            border: 1px solid #cbd5e1;
+        }
+        button.secondary:hover {
+            background: #e2e8f0;
+        }
+        button:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .preview-box {
+            background: #f8fafc;
+            border-radius: 20px;
+            padding: 16px;
+            margin-top: 16px;
+            border: 1px solid #e2e8f0;
+        }
+        .preview-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: #0f172a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .preview-section-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #475569;
+            margin: 10px 0 6px;
+            padding: 4px 8px;
+            background: #e2e8f0;
+            border-radius: 6px;
+        }
+        .preview-item {
+            padding: 4px 8px;
+            margin: 2px 0;
+            font-size: 13px;
+            display: flex;
+            gap: 8px;
+        }
+        .preview-item .num {
+            color: #3b82f6;
+            font-weight: 500;
+            min-width: 40px;
+        }
+        .preview-item .name {
+            color: #1e293b;
+        }
+        .preview-item .pages {
+            color: #94a3b8;
+            font-size: 12px;
+        }
+        .preview-placeholder {
+            color: #94a3b8;
+            padding: 8px;
+            font-size: 13px;
+        }
+        .attachment-badge {
+            background: white;
+            border-radius: 40px;
+            padding: 5px 12px;
+            font-size: 12px;
+            margin: 3px 6px 3px 0;
+            display: inline-block;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            border: 1px solid #e2e8f0;
+        }
+        .status {
+            margin-top: 16px;
+            padding: 12px 16px;
+            border-radius: 16px;
+            font-size: 14px;
+            display: none;
+        }
+        .status.success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+            display: block;
+        }
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+            display: block;
+        }
+        .status.info {
+            background: #e0f2fe;
+            color: #075985;
+            display: block;
+        }
+        hr {
+            margin: 16px 0;
+            border: none;
+            border-top: 1px solid #e2e8f0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 28px;
+            font-size: 13px;
+            color: #64748b;
+        }
+        .generate-btn {
+            background: #10b981;
+            margin-top: 10px;
+            width: 100%;
+            justify-content: center;
+            font-size: 16px;
+            padding: 14px;
+        }
+        .generate-btn:hover {
+            background: #059669;
+        }
+        .reset-btn {
+            background: #ef4444;
+            margin-top: 10px;
+            width: 100%;
+            justify-content: center;
+        }
+        .reset-btn:hover {
+            background: #dc2626;
+        }
+        .total-count {
+            font-size: 13px;
+            color: #64748b;
+            text-align: center;
+            margin: 10px 0;
+        }
+        .hint-text {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2 style="margin-bottom: 20px;">📄 附件目录生成器</h2>
+    <div class="three-columns">
+        <!-- 左栏：模板选择 -->
+        <div class="col">
+            <div class="col-header">
+                <span>📄 模板文件</span>
+            </div>
+            <div class="col-body">
+                <div class="form-group">
+                    <label>📄 原始 Word 文档 (.docx)</label>
+                    <div class="file-select">
+                        <input type="text" id="templatePath" class="file-path" placeholder="未选择模板文件" readonly>
+                        <input type="file" id="fileInput" accept=".docx" style="display:none">
+                        <button id="selectTemplateBtn" class="secondary">浏览文件</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中栏：附件资料 -->
+        <div class="col">
+            <div class="col-header">
+                <span>📎 附件资料</span>
+            </div>
+            <div class="col-body">
+                <div class="form-group">
+                    <label>📎 附件列表（一行一个，格式灵活，支持附件一/附件1）</label>
+                    <textarea id="attachmentsInput" placeholder="输入附件资料，例如：
+附件一：公估委托单
+附件二：保险单"></textarea>
+                </div>
+                <div class="preview-box" id="attachmentPreviewBox">
+                    <div class="preview-title">
+                        <span>📋 附件资料预览</span>
+                        <span id="attachmentPreviewCount" style="font-weight: normal;">0个附件</span>
+                    </div>
+                    <div id="attachmentPreview"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右栏：总目录预览与生成 -->
+        <div class="col">
+            <div class="col-header">
+                <span>✨ 总目录预览 & 生成</span>
+            </div>
+            <div class="col-body">
+                <div class="preview-box" id="combinedPreviewBox">
+                    <div class="preview-title">
+                        <span>📋 即将生成的总目录</span>
+                        <span id="totalPreviewCount" style="font-weight: normal;">0项</span>
+                    </div>
+                    <div id="combinedPreview"></div>
+                </div>
+
+                <div class="total-count" id="totalCountDisplay">报告正文：0 项 | 附件资料：0 项 | 合计：0 项</div>
+
+                <button id="generateDocBtn" class="generate-btn">🚀 一键替换目录 & 生成新文档</button>
+                <button id="resetBtn" class="reset-btn secondary">🔄 重置所有</button>
+                <div id="statusMsg" class="status"></div>
+                <div id="outputInfo" style="margin-top: 12px; font-size:13px; text-align:center; color:#2563eb;"></div>
+            </div>
+        </div>
+    </div>
+    <div class="footer">
+        ✅ 自动保留原文档表格样式、字体、边框
+    </div>
+</div>
+
+<script>
+    // ============ DOM 元素 ============
+    const templatePathInput = document.getElementById('templatePath');
+    const selectTemplateBtn = document.getElementById('selectTemplateBtn');
+    const attachmentsInput = document.getElementById('attachmentsInput');
+    const generateBtn = document.getElementById('generateDocBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const statusDiv = document.getElementById('statusMsg');
+    const outputInfoDiv = document.getElementById('outputInfo');
+    
+    const attachmentPreviewDiv = document.getElementById('attachmentPreview');
+    const attachmentPreviewCount = document.getElementById('attachmentPreviewCount');
+    const combinedPreviewDiv = document.getElementById('combinedPreview');
+    const totalPreviewCount = document.getElementById('totalPreviewCount');
+    const totalCountDisplay = document.getElementById('totalCountDisplay');
+
+    let currentTemplatePath = null;
+
+    // ============ 工具函数 ============
+    const chnMap = { '一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10' };
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // 中文数字转阿拉伯数字
+    function chineseToNumber(cn) {
+        const map = { '零':'0','一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10' };
+        return map[cn] || cn;
+    }
+
+    // ============ 解析附件资料 ============
+    function parseAttachments(text) {
+        const lines = text.split(/\r?\n/);
+        const result = [];
+        for (let line of lines) {
+            line = line.trim();
+            if (!line) continue;
+            
+            // 支持多种格式：附件一：xxx / 附件1：xxx / 附件一 xxx / 附件1 xxx
+            // 更宽松的正则
+            const match = line.match(/^附件([一二三四五六七八九十0-9零一二三四五六七八九十]+)[:：\s、]*(.+)/);
+            if (!match) continue;
+            
+            let numRaw = match[1].trim();
+            let name = match[2].trim();
+            
+            // 中文数字转换
+            let num = numRaw;
+            if (/^[\u4e00-\u9fa5]+$/.test(numRaw)) {
+                num = chineseToNumber(numRaw);
+            }
+            
+            if (name) {
+                result.push({ number: num, name: name });
+            }
+        }
+        console.log('解析附件结果:', result);
+        return result;
+    }
+
+    // ============ 更新预览 ============
+    function updateAllPreviews() {
+        const attachments = parseAttachments(attachmentsInput.value);
+
+        // --- 附件资料预览 ---
+        if (attachments.length === 0) {
+            attachmentPreviewDiv.innerHTML = '<div class="preview-placeholder">暂无附件资料</div>';
+            attachmentPreviewCount.innerText = '0个附件';
+        } else {
+            attachmentPreviewDiv.innerHTML = attachments.map(a => 
+                `<span class="attachment-badge">附件${a.number}：${escapeHtml(a.name.substring(0, 40))}</span>`
+            ).join('');
+            attachmentPreviewCount.innerText = `${attachments.length}个附件`;
+        }
+
+        // --- 合并总目录预览 ---
+        let combinedHtml = '';
+        let totalCount = 0;
+
+        if (attachments.length > 0) {
+            combinedHtml += '<div class="preview-section-title">📎 附件资料</div>';
+            combinedHtml += attachments.map(a => {
+                totalCount++;
+                return `<div class="preview-item"><span class="num">附件${a.number}</span><span class="name">${escapeHtml(a.name)}</span></div>`;
+            }).join('');
+        }
+
+        if (combinedHtml === '') {
+            combinedPreviewDiv.innerHTML = '<div class="preview-placeholder">请输入附件资料</div>';
+            totalPreviewCount.innerText = '0项';
+        } else {
+            combinedPreviewDiv.innerHTML = combinedHtml;
+            totalPreviewCount.innerText = `${totalCount}项`;
+        }
+
+        totalCountDisplay.innerText = `附件资料：${attachments.length} 项`;
+    }
+
+    // ============ 输入事件绑定 ============
+    attachmentsInput.addEventListener('input', updateAllPreviews);
+    updateAllPreviews();
+
+    // ============ 文件输入元素 ============
+    const fileInput = document.getElementById('fileInput');
+
+    // 使用原生 HTML file input 读取文件内容为 base64
+    function readFileAsBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                // 去掉 Data URL 前缀 (data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,)
+                const base64 = reader.result.split(',')[1];
+                resolve(base64);
+            };
+            reader.onerror = () => reject(new Error('读取文件失败'));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // 检测是否在 Electron 环境中
+    function isElectron() {
+        return typeof window !== 'undefined' && window.electronAPI && typeof window.electronAPI.openFile === 'function';
+    }
+
+    // ============ 选择模板文件 ============
+    selectTemplateBtn.addEventListener('click', async () => {
+        try {
+            if (isElectron()) {
+                // Electron 模式：使用 dialog API
+                const result = await window.electronAPI.openFile({
+                    title: '选择目录模板文件（包含表格的docx）',
+                    filters: [{ name: 'Word文档', extensions: ['docx'] }]
+                });
+                if (!result.canceled && result.filePaths.length > 0) {
+                    currentTemplatePath = result.filePaths[0];
+                    templatePathInput.value = currentTemplatePath;
+                    showStatus('✅ 模板已加载：' + currentTemplatePath.split(/[/\\]/).pop(), 'success');
+                }
+            } else {
+                // 浏览器模式：使用原生 file input
+                fileInput.click();
+            }
+        } catch (err) {
+            showStatus('选择文件失败：' + err.message, 'error');
+        }
+    });
+
+    // 原生 file input 选中文件后的回调
+    fileInput.addEventListener('change', async () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+        
+        try {
+            // 保存文件名作为标识
+            currentTemplatePath = file.name;
+            templatePathInput.value = file.name;
+            showStatus('✅ 模板已加载：' + file.name, 'success');
+        } catch (err) {
+            showStatus('选择文件失败：' + err.message, 'error');
+        }
+    });
+
+    // ============ 重置 ============
+    resetBtn.addEventListener('click', () => {
+        currentTemplatePath = null;
+        templatePathInput.value = '';
+        attachmentsInput.value = '';
+        outputInfoDiv.innerHTML = '';
+        showStatus('🔄 已重置所有输入', 'info');
+        updateAllPreviews();
+    });
+
+    // ============ 生成文档 ============
+    generateBtn.addEventListener('click', async () => {
+        // 检查是否在 Electron 环境中（必须使用 Electron IPC 处理 DOCX）
+        if (!isElectron()) {
+            showStatus('❌ 请在案件处理启动器中打开此工具', 'error');
+            return;
+        }
+
+        if (!currentTemplatePath) {
+            showStatus('❌ 请先选择模板（原始 Word 文档）', 'error');
+            return;
+        }
+
+        const attachments = parseAttachments(attachmentsInput.value);
+
+        if (attachments.length === 0) {
+            showStatus('⚠️ 请输入附件资料', 'error');
+            return;
+        }
+
+        try {
+            generateBtn.disabled = true;
+            generateBtn.textContent = '⏳ 正在处理...';
+
+            // 1. 读取模板文件
+            const readResult = await window.electronAPI.readFile(currentTemplatePath);
+            if (!readResult.success) {
+                showStatus('❌ 读取文件失败：' + readResult.error, 'error');
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
+                return;
+            }
+
+            // 2. 调用 IPC 替换表格
+            showStatus('⏳ 正在处理文档...', 'info');
+            const replaceResult = await window.electronAPI.replaceTable(readResult.data, [], attachments);
+            if (!replaceResult.success) {
+                showStatus('❌ 替换失败：' + replaceResult.error, 'error');
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
+                return;
+            }
+
+            // 3. 保存新文档
+            const filename = `新目录_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.docx`;
+            const saveResult = await window.electronAPI.saveFile({
+                title: '保存新目录文档',
+                defaultPath: filename
+            });
+            if (saveResult.canceled) {
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
+                return;
+            }
+            const outputPath = saveResult.filePath;
+
+            const writeResult = await window.electronAPI.writeFile(outputPath, replaceResult.data);
+            if (writeResult.success) {
+                showStatus(`✨ 生成成功！附件资料 ${attachments.length} 项已保存`, 'success');
+                outputInfoDiv.innerHTML = `📂 新文档位置：${escapeHtml(outputPath)}`;
+            } else {
+                showStatus('❌ 保存失败：' + writeResult.error, 'error');
+            }
+        } catch (err) {
+            showStatus('❌ 处理失败：' + err.message, 'error');
+        } finally {
+            generateBtn.disabled = false;
+            generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
+        }
+    });
+
+    // ============ 状态消息 ============
+    function showStatus(msg, type) {
+        statusDiv.innerHTML = msg;
+        statusDiv.className = 'status ' + type;
+        statusDiv.style.display = 'block';
+        setTimeout(() => {
+            statusDiv.style.display = 'none';
+            statusDiv.className = 'status';
+        }, 5000);
+    }
+</script>
+</body>
+</html>

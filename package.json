@@ -1,0 +1,55 @@
+{
+  "name": "case-launcher",
+  "version": "1.0.0",
+  "description": "案件处理启动器 - 集成多个案件处理工具",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.case.launcher",
+    "productName": "案件处理启动器",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "files": [
+      "main.js",
+      "index.html",
+      "renderer.js",
+      "preload.js",
+      "config.json",
+      "combined_backend.py",
+      "modules/**/*",
+      "requirements.txt",
+      "static/**/*",
+      "templates/**/*",
+      "uploads/**/*",
+      "output/**/*"
+    ]
+  },
+  "dependencies": {
+    "docx": "^8.5.0",
+    "electron": "^28.3.3",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
+    "sharp": "^0.33.2",
+    "tmp": "^0.2.1",
+    "xlsx": "^0.18.5",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.9.1"
+  }
+}

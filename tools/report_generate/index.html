@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>报告生成工具</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="backendStatusBar" class="backend-status disconnected">
+    <span class="spinner"></span>
+    <span id="backendStatusText">正在连接后端服务...</span>
+  </div>
+
+  <div class="container" id="app">
+    <header>
+      <h1>📋 报告自动化系统</h1>
+      <p>上传现场图片 + 输入笔录文本 → 自动生成勘查报告</p>
+    </header>
+
+    <div class="card template-card" id="templateCard">
+      <div class="card-title">📋 选择报告模板 <span class="badge badge-optional">可选</span></div>
+      <div class="preset-templates" id="presetTemplateList">
+        <div class="preset-template-item preset-template-none" data-template-id="" onclick="selectPresetTemplate('')">
+          <div class="preset-template-icon">📄</div>
+          <div class="preset-template-info">
+            <div class="preset-template-name">不使用模板（通用格式）</div>
+          </div>
+          <div class="preset-template-check">✓</div>
+        </div>
+      </div>
+      <div class="selected-preset-info" id="selectedPresetInfo" style="display:none">
+        <span class="selected-preset-label">已选择：</span>
+        <span class="selected-preset-name" id="selectedPresetName"></span>
+        <button class="btn btn-outline btn-small" onclick="clearPresetSelection()">重新选择</button>
+      </div>
+    </div>
+
+    <!-- ========== 新增：上传待转换报告 ========== -->
+    <div class="card" id="convertCard">
+      <div class="card-title">🔄 上传待转换报告 <span class="badge" style="background:#8b5cf6;color:#fff;">DOCX转换</span></div>
+      <p style="color:#64748b;font-size:13px;margin:0 0 12px 0;">上传一份 .docx 报告文件，根据已选择的模板自动转换为标准格式</p>
+      <div class="upload-area" id="convertDropZone" style="border-color:#8b5cf6;background:#f5f3ff;">
+        <div class="icon">📄</div>
+        <p>拖拽 .docx 文件到此处，或点击选择</p>
+        <div class="hint">支持 .docx 格式，单个文件</div>
+      </div>
+      <input type="file" id="convertFileInput" accept=".docx" style="display:none">
+      <div class="file-list" id="convertFileInfo" style="display:none;">
+        <span class="file-tag" style="background:#f3e8ff;border-color:#8b5cf6;color:#8b5cf6;">📄 <span id="convertFileName"></span></span>
+        <span id="convertFileRemove" style="cursor:pointer;color:#ef4444;font-size:18px;margin-left:8px;">×</span>
+      </div>
+      <div class="actions" style="margin-top:12px;display:flex;gap:8px;">
+        <button class="btn btn-primary" id="btnConvertDocx" disabled>🔄 开始转换</button>
+        <button class="btn btn-outline" id="btnDownloadConverted" style="display:none;">📥 下载转换结果</button>
+      </div>
+      <div class="progress" id="convertProgress" style="display:none;">
+        <div class="progress-bar"><div class="progress-bar-fill" id="convertProgressFill"></div></div>
+        <div class="progress-text" id="convertProgressText">准备中...</div>
+      </div>
+      <div class="error" id="convertErrorBox" style="display:none;"></div>
+    </div>
+    <!-- ========== 新增结束 ========== -->
+
+    <div class="card">
+      <div class="card-title">🖼️ 现场图片 <span class="badge">最多28张</span></div>
+      <div class="upload-area" id="dropZone">
+        <div class="icon">📁</div>
+        <p>拖拽图片到此处，或点击选择</p>
+        <div class="hint">支持 JPG / PNG，单张不超过 5MB</div>
+      </div>
+      <input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+      <div class="file-list" id="fileList"></div>
+      <div class="stats" id="imageStats" style="display:none">
+        <div class="stat-item"><div class="num" id="imgCount">0</div><div class="label">图片数量</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📷 笔录照片 <span class="badge" style="background:#e67e22;color:#fff;">PaddleOCR识别</span></div>
+      <div class="upload-area" id="statementDropZone" style="border-color:#e67e22;background:#fff8f0;">
+        <div class="icon">📋</div>
+        <p>上传笔录照片（手写文字）</p>
+        <div class="hint">支持 JPG / PNG，将使用 PaddleOCR 识别手写文字</div>
+      </div>
+      <input type="file" id="statementFileInput" multiple accept="image/*" style="display:none">
+      <div class="file-list" id="statementFileList"></div>
+      <div class="stats" id="statementStats" style="display:none">
+        <div class="stat-item"><div class="num" id="statementCount">0</div><div class="label">笔录照片数量</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📝 走访内容</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="sceneInvestigation">走访现场</label>
+          <textarea id="sceneInvestigation" rows="4" placeholder="请输入走访现场调查内容..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="policeStationRecord">派出所</label>
+          <textarea id="policeStationRecord" rows="4" placeholder="请输入派出所调查记录..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="trafficPoliceRecord">交警队</label>
+          <textarea id="trafficPoliceRecord" rows="4" placeholder="请输入交警队调查记录..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="hospitalRecord">医院</label>
+          <textarea id="hospitalRecord" rows="4" placeholder="请输入医院调查记录..."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📄 生成结果</div>
+      <div class="stats" id="resultStats" style="display:none">
+        <div class="stat-item"><div class="num" id="resultImages">0</div><div class="label">识别图片数</div></div>
+        <div class="stat-item"><div class="num" id="resultOcrLen">0</div><div class="label">OCR字符数</div></div>
+      </div>
+      <div class="tabs">
+        <div class="tab active" data-tab="final">最终报告</div>
+        <div class="tab" data-tab="ocr">OCR原文</div>
+      </div>
+      <div class="result-content" id="resultContent"></div>
+      <div class="error" id="errorBox"></div>
+
+      <div class="download-section" id="downloadSection">
+        <h4>📥 导出报告</h4>
+        <div class="download-buttons">
+          <button class="btn btn-success" id="btnDownloadDocx">📄 下载 Word 文档</button>
+        </div>
+      </div>
+
+      <div class="format-summary" id="formatSummary" style="display:none;">
+        <h4>📑 标准化格式摘要</h4>
+        <div class="format-summary-grid">
+          <div class="format-summary-item">
+            <span class="format-summary-label">模板名称</span>
+            <span class="format-summary-value" id="formatTemplateName">-</span>
+          </div>
+          <div class="format-summary-item">
+            <span class="format-summary-label">公司名称</span>
+            <span class="format-summary-value" id="formatCompanyName">-</span>
+          </div>
+          <div class="format-summary-item">
+            <span class="format-summary-label">识别章节数</span>
+            <span class="format-summary-value format-summary-highlight" id="formatChaptersFound">0</span>
+          </div>
+          <div class="format-summary-item">
+            <span class="format-summary-label">自动补全章节</span>
+            <span class="format-summary-value format-summary-warning" id="formatChaptersAuto">0</span>
+          </div>
+        </div>
+        <div class="format-key-fields" id="formatKeyFields" style="display:none;">
+          <div class="format-chapters-title">📌 提取的关键信息：</div>
+        </div>
+        <div class="format-chapters">
+          <div class="format-chapters-title">章节结构：</div>
+          <ol class="format-chapters-list" id="formatChaptersList"></ol>
+        </div>
+        <div class="format-download">
+          <a class="btn btn-success" id="formatDownloadLink" target="_blank" style="display:none;">📥 下载标准格式DOCX</a>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="btnRun">🚀 运行生成</button>
+        <button class="btn btn-outline" id="btnClear">清空</button>
+      </div>
+      <div class="progress" id="progressCard" style="display:none;">
+        <div class="progress-bar"><div class="progress-bar-fill" id="progressFill"></div></div>
+        <div class="progress-text" id="progressText">等待中...</div>
+      </div>
+      <button class="btn btn-outline copy-btn" id="btnCopy">📋 复制报告</button>
+    </div>
+  </div>
+
+  <script type="module" src="./report_generate.js"></script>
+</body>
+</html>

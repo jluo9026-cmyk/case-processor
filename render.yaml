@@ -1,0 +1,27 @@
+# ========================================
+# 案件处理启动器 - Render.com 部署配置
+# ========================================
+
+services:
+  - type: web
+    name: case-processor
+    runtime: docker
+    repo: https://github.com/YOUR_USERNAME/case-processor
+    plan: free
+    
+    # 健康检查路径
+    healthCheckPath: /api/health
+    
+    # 环境变量
+    envVars:
+      - key: DEEPSEEK_API_KEY
+        sync: false  # 部署时手动输入
+      - key: BAIDU_API_KEY
+        sync: false
+      - key: BAIDU_SECRET_KEY
+        sync: false
+      - key: QWEN_VL_API_KEY
+        sync: false
+    
+    # 自动部署
+    autoDeploy: true

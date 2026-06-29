@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Output files
+output/
+uploads/
+tools/附件处理器-合并版/node_modules/
+tools/附件处理器-合并版/temp/
+
+# Environment
+.env
+.backend_port
+temp_fill_excel.py
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

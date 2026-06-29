@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>附件处理器 - 一键连续流程</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root {
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --bg: #f8fafc;
+    --card-bg: #ffffff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+    color: white;
+    padding: 1rem 1rem;
+    text-align: center;
+  }
+  .header h1 { font-size: 1.4rem; }
+  .header p { opacity: 0.85; font-size: 0.85rem; }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 0.75rem; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
+  .full-width { grid-column: 1 / -1; }
+
+  .card {
+    background: var(--card-bg);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 0.6rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .card-body { padding: 0.75rem; }
+
+  .form-group { margin-bottom: 0.75rem; }
+  .form-group label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+  }
+
+  .file-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .file-upload-zone:hover { border-color: var(--primary); background: rgba(37,99,235,0.03); }
+  .file-upload-zone.has-file { border-color: var(--success); background: rgba(34,197,94,0.05); }
+  .file-upload-zone .icon { font-size: 1.8rem; }
+  .file-upload-zone .hint { font-size: 0.75rem; color: var(--text-secondary); }
+
+  textarea {
+    width: 100%;
+    min-height: 140px;
+    padding: 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    resize: vertical;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+  .btn-success { background: var(--success); color: white; }
+  .btn-success:hover:not(:disabled) { background: #16a34a; }
+  .btn-outline { background: white; color: var(--text); border: 1px solid var(--border); }
+  .btn-outline:hover:not(:disabled) { background: #f1f5f9; }
+  .btn-danger { background: var(--error); color: white; }
+
+  .btn-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+  .btn-large { padding: 0.8rem 2rem; font-size: 1rem; font-weight: 600; }
+
+  .status {
+    padding: 0.6rem 0.8rem;
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+  }
+  .status-info { background: #eff6ff; color: #1e40af; }
+  .status-success { background: #f0fdf4; color: #166534; }
+  .status-error { background: #fef2f2; color: #991b1b; }
+  .status-running { background: #fef3c7; color: #92400e; }
+
+  .image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+    gap: 0.25rem;
+    margin-top: 0.4rem;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .image-thumb {
+    width: 50px;
+    height: 50px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 2px solid transparent;
+  }
+
+  .mapping-section {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .mapping-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+  }
+  .mapping-item:last-child { border-bottom: none; }
+  .mapping-label { font-weight: 500; min-width: 60px; color: var(--primary); }
+  .mapping-range { font-size: 0.8rem; color: var(--text-secondary); flex: 1; }
+
+  /* ====== 进度面板 ====== */
+  .progress-panel {
+    background: #f1f5f9;
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .progress-panel.hidden { display: none; }
+
+  .progress-bar-outer {
+    width: 100%;
+    height: 12px;
+    background: #e2e8f0;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2563eb, #22c55e);
+    border-radius: 6px;
+    transition: width 0.4s ease;
+    width: 0%;
+  }
+  .progress-text {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 0.3rem;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .phase-indicators {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+    justify-content: center;
+  }
+  .phase-dot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+  }
+  .phase-dot .circle {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    background: white;
+    transition: all 0.3s;
+  }
+  .phase-dot.active .circle {
+    border-color: var(--primary);
+    background: var(--primary);
+    color: white;
+  }
+  .phase-dot.done .circle {
+    border-color: var(--success);
+    background: var(--success);
+    color: white;
+  }
+  .phase-dot.error .circle {
+    border-color: var(--error);
+    background: var(--error);
+    color: white;
+  }
+
+  /* ====== 日志面板 ====== */
+  .log-panel {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 0.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    margin-top: 0.5rem;
+  }
+  .log-panel.hidden { display: none; }
+  .log-entry {
+    color: #94a3b8;
+    padding: 0.1rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .log-entry .time { color: #64748b; margin-right: 0.4rem; }
+  .log-entry.info { color: #93c5fd; }
+  .log-entry.success { color: #86efac; }
+  .log-entry.error { color: #fca5a5; }
+  .log-entry.warn { color: #fcd34d; }
+
+  /* ====== 预览 ====== */
+  .preview-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .preview-card pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 0.75rem;
+    font-size: 0.8rem;
+  }
+  .markdown-body {
+    padding: 0.75rem;
+    font-size: 0.85rem;
+  }
+  .markdown-body h3 { font-size: 1.05rem; font-weight: bold; margin: 0.5rem 0 0.3rem; }
+  .markdown-body img { max-width: 100%; border-radius: 4px; margin: 0.3rem 0; }
+  .markdown-body hr { border: none; border-top: 1px solid #ddd; margin: 0.5rem 0; }
+
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0.5rem;
+  }
+  .tab {
+    padding: 0.4rem 0.8rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-size: 0.85rem;
+  }
+  .tab:hover { color: var(--primary); }
+  .tab.active { border-color: var(--primary); color: var(--primary); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .stat-card {
+    background: #f8fafc;
+    border-radius: 6px;
+    padding: 0.5rem;
+    text-align: center;
+  }
+  .stat-number { font-size: 1.2rem; font-weight: 700; color: var(--primary); }
+  .stat-label { font-size: 0.7rem; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📎 附件处理器 - 一键连续流程</h1>
+  <p>上传 → 映射 → Markdown → Word，一键完成</p>
+</div>
+
+<div class="container">
+  <div class="grid">
+    
+    <!-- ======== 左侧：上传文件 ======== -->
+    <div class="card">
+      <div class="card-header">📥 上传文件</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>DOCX 模板（可选）</label>
+          <div class="file-upload-zone" id="docxZone" onclick="document.getElementById('docxInput').click()">
+            <div class="icon">📄</div>
+            <div style="font-size:0.85rem;">点击上传</div>
+            <div class="hint">提取页眉和图片尺寸</div>
+            <div class="file-name" id="docxFileName" style="display:none;font-size:0.8rem;color:var(--success);margin-top:0.3rem;"></div>
+          </div>
+          <input type="file" id="docxInput" accept=".docx" style="display:none" onchange="handleDocxUpload(this)">
+        </div>
+
+        <div class="form-group">
+          <label>🖼️ 图片文件 <span style="color:var(--error);">*</span></label>
+          
+          <!-- 方式一：选文件夹(自动识别附件) -->
+          <div class="file-upload-zone" id="folderZone" onclick="document.getElementById('folderInput').click()" style="margin-bottom:0.4rem;">
+            <div class="icon">📁</div>
+            <div style="font-size:0.85rem;font-weight:600;color:var(--primary);">⭐ 上传文件夹（自动识别附件）</div>
+            <div class="hint">直接拖拽文件夹到此处，或点击选择</div>
+            <div class="hint" style="font-size:0.7rem;color:var(--warning);">命名格式：附件一、附件二... 自动分配映射关系</div>
+            <div class="file-name" id="folderInfo" style="display:none;font-size:0.8rem;color:var(--success);margin-top:0.3rem;"></div>
+          </div>
+          <input type="file" id="folderInput" webkitdirectory multiple style="display:none" onchange="handleFolderUpload(this)">
+
+          <!-- 方式二：选图片文件(传统方式) -->
+          <div class="file-upload-zone" id="imageZone" onclick="document.getElementById('imageInput').click()" style="margin-bottom:0;">
+            <div class="icon">🖼️</div>
+            <div style="font-size:0.85rem;">或选择单个图片文件</div>
+            <div class="hint">支持 jpg/png/webp，可多选（需手动设置映射）</div>
+            <div class="file-name" id="imageCount" style="display:none;font-size:0.8rem;color:var(--success);margin-top:0.3rem;"></div>
+          </div>
+          <input type="file" id="imageInput" accept="image/*" multiple style="display:none" onchange="handleImageUpload(this)">
+          
+          <div class="image-grid" id="imageGrid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== 中间：配置 ======== -->
+    <div class="card">
+      <div class="card-header">⚙️ 配置</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>附件名称（每行一个）</label>
+          <textarea id="customNames" placeholder="附件一：惠州市中拓模塑科技有限公司车间现场照片
+附件二：大门监控视频截图
+...（将替换默认名称）"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem;">
+            映射规则
+            <button class="btn btn-outline" style="padding:0.15rem 0.5rem; font-size:0.7rem;" onclick="resetRanges()">↩ 重置</button>
+          </label>
+          <div class="mapping-section" id="rangesEditor">
+            <p style="color:var(--text-secondary);font-size:0.8rem;">加载中...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== 右侧：进度与操作 ======== -->
+    <div class="card">
+      <div class="card-header">🚀 一键流程</div>
+      <div class="card-body">
+        <!-- 进度面板 -->
+        <div class="progress-panel hidden" id="progressPanel">
+          <div class="phase-indicators" id="phaseIndicators">
+            <div class="phase-dot" data-phase="upload">
+              <div class="circle">📤</div>
+              <span>上传</span>
+            </div>
+            <div class="phase-dot" data-phase="build">
+              <div class="circle">📋</div>
+              <span>映射</span>
+            </div>
+            <div class="phase-dot" data-phase="markdown">
+              <div class="circle">📝</div>
+              <span>Markdown</span>
+            </div>
+            <div class="phase-dot" data-phase="images">
+              <div class="circle">🖼️</div>
+              <span>图片</span>
+            </div>
+            <div class="phase-dot" data-phase="word">
+              <div class="circle">📄</div>
+              <span>Word</span>
+            </div>
+            <div class="phase-dot" data-phase="done">
+              <div class="circle">✅</div>
+              <span>完成</span>
+            </div>
+          </div>
+          <div class="progress-bar-outer">
+            <div class="progress-bar-fill" id="progressFill"></div>
+          </div>
+          <div class="progress-text">
+            <span id="progressMessage">准备就绪</span>
+            <span id="progressPercent">0%</span>
+          </div>
+        </div>
+
+        <!-- 日志面板 -->
+        <div class="log-panel hidden" id="logPanel">
+          <div id="logEntries"></div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="btn-row" style="justify-content:center;">
+          <button class="btn btn-success btn-large" onclick="startOneClick()" id="btnOneClick">
+            🚀 一键生成
+          </button>
+          <button class="btn btn-outline" onclick="generateMarkdownOnly()" id="btnMarkdownOnly" disabled>
+            📝 仅Markdown
+          </button>
+          <button class="btn btn-outline" onclick="downloadWord()" id="btnDownload" style="display:none;">
+            📥 下载Word
+          </button>
+        </div>
+        <div id="statusArea"></div>
+      </div>
+    </div>
+
+  </div>
+  
+  <!-- ======== 底部预览区域 ======== -->
+  <div class="full-width" style="margin-top:0.75rem;">
+    <div class="card">
+      <div class="card-header" style="justify-content:space-between;">
+        <span>👁️ 输出预览</span>
+        <span style="font-size:0.75rem;color:var(--text-secondary);" id="previewHint">一键生成后自动显示</span>
+      </div>
+      <div class="card-body">
+        <div id="placeholder">
+          <p style="color:var(--text-secondary);text-align:center;padding:1.5rem;font-size:0.9rem;">
+            上传图片后点击「一键生成」开始全流程
+          </p>
+        </div>
+        <div id="outputArea" style="display:none;">
+          <div class="stats">
+            <div class="stat-card">
+              <div class="stat-number" id="statImages">0</div>
+              <div class="stat-label">图片</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="statAttachments">0</div>
+              <div class="stat-label">附件组</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="statDuration">-</div>
+              <div class="stat-label">耗时</div>
+            </div>
+          </div>
+          <div class="tab-bar">
+            <div class="tab" onclick="switchTab(this,'preview')">👁️ 预览</div>
+            <div class="tab active" onclick="switchTab(this,'markdown')">📝 Markdown</div>
+          </div>
+          <div class="preview-card markdown-body" id="tab-preview" style="display:none;">
+            <div id="markdownPreview"></div>
+          </div>
+          <div class="preview-card" id="tab-markdown">
+            <pre id="markdownRaw"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 全局状态
+// ============================================================
+let docxContent = '';
+let docxTitle = '';
+let docxHeader = { text: '', hasIcon: false };
+let docxImageSizes = [];
+let images = [];
+let lastMarkdown = '';
+let generatedFilename = '';
+let eventSource = null;
+let startTime = 0;
+
+// 分批上传配置 - 每批最多上传文件数，避免大文件集合导致内存溢出
+const BATCH_SIZE = 5;
+
+function $(id) { return document.getElementById(id); }
+
+function setStatus(type, msg) {
+  $('statusArea').innerHTML = `<div class="status status-${type}">${msg}</div>`;
+}
+
+function switchTab(el, id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  $('tab-preview').style.display = id === 'preview' ? 'block' : 'none';
+  $('tab-markdown').style.display = id === 'markdown' ? 'block' : 'none';
+}
+
+// ============================================================
+// SSE 实时进度监听
+// ============================================================
+function connectSSE() {
+  if (eventSource) {
+    eventSource.close();
+  }
+  
+  eventSource = new EventSource('/api/progress');
+  
+  eventSource.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      handleProgress(data);
+    } catch (err) {
+      // ignore
+    }
+  };
+  
+  eventSource.onerror = function() {
+    // 自动重连
+    setTimeout(() => connectSSE(), 3000);
+  };
+}
+
+function handleProgress(data) {
+  // 更新进度条
+  if (data.progress !== undefined) {
+    $('progressFill').style.width = data.progress + '%';
+    $('progressPercent').textContent = data.progress + '%';
+  }
+  
+  // 更新进度消息
+  if (data.message) {
+    $('progressMessage').textContent = data.message;
+  }
+  
+  // 更新阶段指示器
+  if (data.type === 'oneclick' && data.phase) {
+    updatePhase(data.phase, data.status);
+  } else if (data.type !== 'connected') {
+    // 单步骤操作也更新指示器
+    updatePhase(data.type, data.status);
+  }
+  
+  // 记录日志
+  if (data.message && data.type !== 'connected') {
+    addLog(data.status === 'error' ? 'error' : (data.status === 'done' || data.status === 'success' ? 'success' : 'info'), data.message);
+  }
+  
+  // 一键流程完成 - 自动下载
+  if (data.type === 'oneclick' && data.phase === 'done' && data.outputPath) {
+    generatedFilename = data.outputPath;
+    $('btnDownload').style.display = 'inline-flex';
+    setTimeout(() => downloadWord(), 500);
+  }
+}
+
+function updatePhase(phase, status) {
+  document.querySelectorAll('.phase-dot').forEach(dot => {
+    const p = dot.dataset.phase;
+    dot.classList.remove('active', 'done', 'error');
+    if (p === phase) {
+      dot.classList.add(status === 'done' || status === 'success' ? 'done' : 'active');
+      if (status === 'error') dot.classList.add('error');
+    } else if (isPhaseBefore(p, phase)) {
+      dot.classList.add('done');
+    }
+  });
+}
+
+function isPhaseBefore(a, b) {
+  const order = ['upload', 'docx', 'build', 'markdown', 'images', 'parse', 'word', 'done'];
+  return order.indexOf(a) < order.indexOf(b);
+}
+
+// ============================================================
+// 日志系统
+// ============================================================
+function addLog(level, message) {
+  const panel = $('logPanel');
+  panel.classList.remove('hidden');
+  
+  const entries = $('logEntries');
+  const time = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.className = `log-entry ${level}`;
+  div.innerHTML = `<span class="time">[${time}]</span>${message}`;
+  entries.appendChild(div);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+// ============================================================
+// 文件上传处理
+// ============================================================
+async function handleDocxUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  setStatus('info', '⏳ 正在提取文档内容...');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/upload-docx', { method: 'POST', body: formData });
+    const result = await resp.json();
+
+    if (result.success) {
+      docxContent = result.content;
+      docxTitle = result.title || '附件处理报告';
+      docxHeader = result.header || { text: '', hasIcon: false };
+      docxImageSizes = result.imageSizes || [];
+      
+      $('docxZone').classList.add('has-file');
+      const fn = $('docxFileName');
+      fn.style.display = 'block';
+      fn.textContent = `✅ ${file.name}${docxImageSizes.length ? ` (${docxImageSizes.length}张图片)` : ''}`;
+      
+      setStatus('success', `✅ 文档已加载: ${docxTitle}`);
+      addLog('success', `DOCX加载完成：${docxTitle}`);
+    } else {
+      setStatus('error', `❌ ${result.error}`);
+    }
+  } catch (err) {
+    setStatus('error', '❌ 上传失败: ' + err.message);
+  }
+}
+
+async function handleImageUpload(input) {
+  const files = Array.from(input.files);
+  if (files.length === 0) return;
+
+  setStatus('info', `⏳ 正在分批上传 ${files.length} 张图片...`);
+
+  try {
+    // 分批上传，避免大文件集合导致浏览器内存暴涨
+    const allNewImages = [];
+    let uploaded = 0;
+    const total = files.length;
+
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      
+      const formData = new FormData();
+      for (const file of batch) {
+        formData.append('files', file);
+      }
+      
+      const resp = await fetch('/api/upload-images', { method: 'POST', body: formData });
+      if (!resp.ok) throw new Error((await resp.json()).error || `HTTP ${resp.status}`);
+      const result = await resp.json();
+      
+      if (!result.success) throw new Error(result.error || '上传失败');
+      
+      // 收集本批次上传的图片
+      for (const img of result.images) {
+        allNewImages.push({
+          index: images.length + allNewImages.length + img.index,
+          name: img.name,
+          size: img.size,
+          filepath: img.filepath
+        });
+      }
+      
+      uploaded += batch.length;
+      const pct = Math.round((uploaded / total) * 100);
+      setStatus('info', `⏳ 上传中 ${uploaded}/${total} (${pct}%)`);
+      addLog('info', `📤 已上传 ${uploaded}/${total} 张图片`);
+    }
+    
+    // 合并到全局
+    images = images.concat(allNewImages);
+    
+    $('imageZone').classList.add('has-file');
+    $('imageCount').style.display = 'block';
+    $('imageCount').textContent = `✅ ${images.length} 张图片`;
+    
+    // 缩略图
+    const grid = $('imageGrid');
+    grid.innerHTML = '';
+    images.forEach(img => {
+      const el = document.createElement('img');
+      el.className = 'image-thumb';
+      el.src = `/temp/${img.filepath.split(/[/\\]/).pop()}`;
+      el.title = img.name;
+      grid.appendChild(el);
+    });
+    
+    const totalSize = images.reduce((s, img) => s + (img.size || 0), 0);
+    const sizeStr = totalSize < 1024 * 1024 ? Math.round(totalSize / 1024) + 'KB' : (totalSize / (1024 * 1024)).toFixed(1) + 'MB';
+    setStatus('success', `✅ ${images.length} 张图片 (${sizeStr})`);
+    addLog('success', `已上传 ${images.length} 张图片 (${sizeStr})`);
+    
+    // 自动启用一键生成
+    $('btnOneClick').disabled = false;
+  } catch (err) {
+    setStatus('error', '❌ 上传失败: ' + err.message);
+  }
+}
+
+// ============================================================
+// 拖拽上传文件夹（避免浏览器安全确认弹窗）
+// ============================================================
+
+/**
+ * 从拖拽事件递归读取所有文件
+ * 通过 webkitGetAsEntry 读取文件夹内容，不会触发浏览器信任确认
+ */
+function getFilesFromDrag(items) {
+  const files = [];
+  const promises = [];
+  
+  function traverseEntry(entry, path = '') {
+    return new Promise((resolve) => {
+      if (entry.isFile) {
+        entry.file(file => {
+          // 设置 webkitRelativePath 以兼容 handleFolderUpload 中的路径解析
+          Object.defineProperty(file, 'webkitRelativePath', {
+            value: path ? path + '/' + file.name : file.name,
+            writable: false
+          });
+          files.push(file);
+          resolve();
+        }, resolve);
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        // 需要多次调用 readEntries 直到返回空数组
+        function readAllEntries() {
+          dirReader.readEntries(entries => {
+            if (entries.length === 0) {
+              resolve();
+            } else {
+              const subPromises = [];
+              for (const subEntry of entries) {
+                const subPath = path ? path + '/' + entry.name : entry.name;
+                subPromises.push(traverseEntry(subEntry, subPath));
+              }
+              Promise.all(subPromises).then(readAllEntries);
+            }
+          }, resolve);
+        }
+        readAllEntries();
+      } else {
+        resolve();
+      }
+    });
+  }
+  
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry();
+    if (entry) {
+      promises.push(traverseEntry(entry));
+    }
+  }
+  
+  return Promise.all(promises).then(() => files);
+}
+
+// 拖拽事件处理
+function setupDragDrop() {
+  const zone = $('folderZone');
+  
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    zone.style.borderColor = 'var(--primary)';
+    zone.style.background = 'rgba(37,99,235,0.08)';
+  });
+  
+  zone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    zone.style.borderColor = '';
+    zone.style.background = '';
+  });
+  
+  zone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    zone.style.borderColor = '';
+    zone.style.background = '';
+    
+    const items = e.dataTransfer?.items;
+    if (!items || items.length === 0) {
+      setStatus('error', '❌ 没有检测到拖入的文件');
+      return;
+    }
+    
+    // 读取拖入的文件
+    const allFiles = await getFilesFromDrag(items);
+    if (allFiles.length === 0) {
+      setStatus('error', '❌ 未读取到任何文件');
+      return;
+    }
+    
+    // 过滤只保留图片文件
+    const imageFiles = allFiles.filter(f => /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(f.name));
+    if (imageFiles.length === 0) {
+      setStatus('error', '❌ 拖入的文件夹中没有找到图片文件');
+      return;
+    }
+    
+    addLog('success', `📁 拖入文件夹检测到 ${imageFiles.length} 张图片`);
+    
+    // 模拟 input 对象，复用 handleFolderUpload 逻辑
+    const fakeInput = { files: imageFiles };
+    await handleFolderUpload(fakeInput);
+  });
+}
+
+// ============================================================
+// 文件夹上传（自动识别附件映射）- 分批上传避免内存溢出
+// ============================================================
+async function handleFolderUpload(input) {
+  const allFiles = Array.from(input.files);
+  if (allFiles.length === 0) return;
+
+  setStatus('info', `⏳ 正在处理 ${allFiles.length} 个文件，按附件文件夹分组...`);
+
+  try {
+    // 按文件夹分组：获取相对路径中的附件文件夹名
+    const folderMap = new Map(); // folderName -> [file, file, ...]
+    let fileCount = 0;
+    
+    for (const file of allFiles) {
+      const parts = file.webkitRelativePath.split('/');
+      if (parts.length < 2) continue;
+      
+      let folderName = null;
+      for (let pi = parts.length - 2; pi >= 0; pi--) {
+        if (/^附件[一二三四五六七八九十\d]/.test(parts[pi])) {
+          folderName = parts[pi];
+          break;
+        }
+      }
+      if (!folderName) folderName = parts[0];
+      
+      if (!folderMap.has(folderName)) {
+        folderMap.set(folderName, []);
+      }
+      folderMap.get(folderName).push(file);
+      fileCount++;
+    }
+    
+    addLog('info', `📁 检测到 ${folderMap.size} 个文件夹: ${Array.from(folderMap.keys()).join(', ')}`);
+    
+    // ====== 分批上传：逐文件夹分批上传，避免大文件集合导致浏览器内存溢出 ======
+    const folderGroups = []; // [{folderName, globalIndexes: [startIdx, ...]}]
+    let nextGlobalIdx = images.length;
+    const allNewImages = [];
+    let totalUploaded = 0;
+    const totalFiles = allFiles.length;
+    
+    // 按附件编号排序，保持顺序一致
+    const sortedFolders = Array.from(folderMap.entries());
+    sortedFolders.sort((a, b) => {
+      const idxA = parseFolderToAttachmentIndex(a[0]);
+      const idxB = parseFolderToAttachmentIndex(b[0]);
+      return (idxA >= 0 ? idxA : 999) - (idxB >= 0 ? idxB : 999);
+    });
+    
+    for (const [folderName, files] of sortedFolders) {
+      const batchIndexes = [];
+      
+      // 每个文件夹内的文件分小批上传
+      for (let i = 0; i < files.length; i += BATCH_SIZE) {
+        const batch = files.slice(i, i + BATCH_SIZE);
+        
+        const formData = new FormData();
+        for (const file of batch) {
+          formData.append('files', file);
+        }
+        
+        const resp = await fetch('/api/upload-images', {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.error || `HTTP ${resp.status}`);
+        }
+        
+        const result = await resp.json();
+        if (!result.success) throw new Error(result.error || '上传失败');
+        
+        // 收集本批次图片
+        for (const img of result.images) {
+          allNewImages.push({
+            index: nextGlobalIdx,
+            name: img.name,
+            size: img.size,
+            filepath: img.filepath
+          });
+          batchIndexes.push(nextGlobalIdx);
+          nextGlobalIdx++;
+        }
+        
+        totalUploaded += batch.length;
+        const pct = Math.round((totalUploaded / totalFiles) * 100);
+        setStatus('info', `⏳ 上传中 ${totalUploaded}/${totalFiles} (${pct}%)`);
+        addLog('info', `📤 已上传 ${totalUploaded}/${totalFiles} 个文件`);
+      }
+      
+      folderGroups.push({
+        folderName,
+        globalIndexes: batchIndexes
+      });
+    }
+    
+    // ====== 所有文件分批上传完成，合并到全局 ======
+    images = images.concat(allNewImages);
+    const newImageCount = allNewImages.length;
+    
+    // ====== 根据文件夹分组自动生成映射规则 ======
+    const autoRanges = [];
+    for (const group of folderGroups) {
+      if (group.globalIndexes.length === 0) continue;
+      
+      const attIdx = parseFolderToAttachmentIndex(group.folderName);
+      if (attIdx < 0) continue; // 跳过非附件文件夹
+      
+      const start = Math.min(...group.globalIndexes);
+      const end = Math.max(...group.globalIndexes);
+      
+      autoRanges.push({
+        start,
+        end,
+        idx: attIdx
+      });
+    }
+    
+    if (autoRanges.length > 0) {
+      // 收集自动生成的附件编号集合
+      const autoIdxSet = new Set(autoRanges.map(r => r.idx));
+      
+      // 新图片的全局索引范围
+      const newStart = nextGlobalIdx - newImageCount;
+      const newEnd = nextGlobalIdx - 1;
+      
+      // 清理与新图片范围重叠的旧规则
+      currentRanges = currentRanges.filter(r => {
+        if (autoIdxSet.has(r.idx)) return true;
+        if (r.start <= newEnd && r.end >= newStart) return false;
+        return true;
+      });
+      
+      // 添加/替换自动生成的规则
+      for (const newRange of autoRanges) {
+        const existingIdx = currentRanges.findIndex(r => r.idx === newRange.idx);
+        if (existingIdx >= 0) {
+          currentRanges[existingIdx] = newRange;
+        } else {
+          currentRanges.push(newRange);
+        }
+      }
+      
+      currentRanges.sort((a, b) => a.idx - b.idx);
+      
+      renderRangesEditor();
+      addLog('success', `📋 映射规则已自动更新，共 ${currentRanges.length} 条`);
+    }
+    
+    // ====== 更新UI ======
+    $('folderZone').classList.add('has-file');
+    const info = $('folderInfo');
+    info.style.display = 'block';
+    info.textContent = `✅ ${folderGroups.length} 个文件夹，共 ${newImageCount} 张图片`;
+    
+    // 显示缩略图
+    const grid = $('imageGrid');
+    grid.innerHTML = '';
+    images.forEach(img => {
+      const el = document.createElement('img');
+      el.className = 'image-thumb';
+      el.src = `/temp/${img.filepath.split(/[/\\]/).pop()}`;
+      el.title = img.name;
+      grid.appendChild(el);
+    });
+    
+    const totalSize = images.reduce((s, img) => s + (img.size || 0), 0);
+    const sizeStr = totalSize < 1024 * 1024 ? Math.round(totalSize / 1024) + 'KB' : (totalSize / (1024 * 1024)).toFixed(1) + 'MB';
+    setStatus('success', `✅ 文件夹上传成功！${newImageCount} 张图片 (${sizeStr})，映射规则已自动生成`);
+    addLog('success', `✅ 文件夹上传完成：${folderGroups.length} 个文件夹，${newImageCount} 张图片`);
+    
+    // 自动启用一键生成
+    $('btnOneClick').disabled = false;
+  } catch (err) {
+    setStatus('error', '❌ 文件夹上传失败: ' + err.message);
+    addLog('error', `文件夹上传失败: ${err.message}`);
+  }
+}
+
+// 解析文件夹名中的附件索引（前端侧复制，避免依赖后端）
+function parseFolderToAttachmentIndex(folderName) {
+  const match = folderName.match(/附件([一二三四五六七八九十\d]+)/);
+  if (!match) return -1;
+  
+  const CHINESE_NUM_MAP = {
+    '一': 0, '二': 1, '三': 2, '四': 3, '五': 4,
+    '六': 5, '七': 6, '八': 7, '九': 8, '十': 9,
+    '十一': 10, '十二': 11, '十三': 12, '十四': 13, '十五': 14,
+    '十六': 15, '十七': 16, '十八': 17, '十九': 18, '二十': 19
+  };
+  
+  const numStr = match[1];
+  if (CHINESE_NUM_MAP[numStr] !== undefined) return CHINESE_NUM_MAP[numStr];
+  const num = parseInt(numStr, 10);
+  if (!isNaN(num) && num >= 1 && num <= 20) return num - 1;
+  
+  return -1;
+}
+
+// ============================================================
+// 映射规则管理
+// ============================================================
+let currentRanges = [];
+
+const DEFAULT_RANGES = [
+  { start: 0, end: 2, idx: 0 }, { start: 3, end: 18, idx: 1 }, { start: 19, end: 20, idx: 2 },
+  { start: 21, end: 24, idx: 3 }, { start: 25, end: 25, idx: 4 }, { start: 26, end: 46, idx: 5 },
+  { start: 47, end: 48, idx: 6 }, { start: 49, end: 49, idx: 7 }, { start: 50, end: 50, idx: 8 },
+  { start: 51, end: 51, idx: 9 }, { start: 52, end: 52, idx: 10 }, { start: 53, end: 53, idx: 11 },
+  { start: 54, end: 54, idx: 12 }, { start: 55, end: 55, idx: 13 }, { start: 56, end: 56, idx: 14 },
+  { start: 57, end: 57, idx: 15 }, { start: 58, end: 58, idx: 16 }, { start: 59, end: 59, idx: 17 },
+  { start: 60, end: 60, idx: 18 }, { start: 61, end: 61, idx: 19 }
+];
+
+async function loadRanges() {
+  try {
+    const res = await fetch('/api/ranges');
+    const data = await res.json();
+    currentRanges = data.ranges || DEFAULT_RANGES.map(r => ({...r}));
+  } catch {
+    currentRanges = DEFAULT_RANGES.map(r => ({...r}));
+  }
+  renderRangesEditor();
+}
+
+function renderRangesEditor() {
+  const c = $('rangesEditor');
+  c.innerHTML = currentRanges.map((r, i) => `
+    <div class="mapping-item">
+      <span class="mapping-label">附件${i+1}</span>
+      <input type="number" min="0" value="${r.start}"
+        style="width:50px;padding:0.15rem 0.3rem;font-size:0.75rem;text-align:center;border:1px solid var(--border);border-radius:4px;"
+        onchange="updateRange(${i},'start',this.value)">
+      <span style="color:var(--text-secondary);">~</span>
+      <input type="number" min="0" value="${r.end}"
+        style="width:50px;padding:0.15rem 0.3rem;font-size:0.75rem;text-align:center;border:1px solid var(--border);border-radius:4px;"
+        onchange="updateRange(${i},'end',this.value)">
+    </div>
+  `).join('');
+}
+
+function updateRange(idx, field, val) {
+  const n = parseInt(val, 10);
+  if (isNaN(n) || n < 0) return;
+  currentRanges[idx][field] = n;
+  saveRanges();
+}
+
+async function saveRanges() {
+  try {
+    await fetch('/api/ranges', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ranges: currentRanges})
+    });
+  } catch {}
+}
+
+async function resetRanges() {
+  try {
+    const res = await fetch('/api/ranges/reset', {method:'POST'});
+    const data = await res.json();
+    if (data.success) currentRanges = data.ranges;
+  } catch {
+    currentRanges = DEFAULT_RANGES.map(r => ({...r}));
+  }
+  renderRangesEditor();
+  setStatus('success', '✅ 映射规则已重置');
+}
+
+// ============================================================
+// 一键连续流程
+// ============================================================
+async function startOneClick() {
+  if (images.length === 0) {
+    setStatus('error', '❌ 请先上传图片');
+    return;
+  }
+
+  const btn = $('btnOneClick');
+  btn.disabled = true;
+  btn.textContent = '⏳ 处理中...';
+  
+  startTime = Date.now();
+  
+  // 显示进度面板
+  $('progressPanel').classList.remove('hidden');
+  $('progressFill').style.width = '0%';
+  $('progressPercent').textContent = '0%';
+  $('progressMessage').textContent = '正在准备...';
+  $('logPanel').classList.remove('hidden');
+  $('logEntries').innerHTML = '';
+  
+  // 重置阶段指示器
+  document.querySelectorAll('.phase-dot').forEach(d => d.classList.remove('active', 'done', 'error'));
+  $('previewHint').textContent = '一键流程进行中...';
+  $('btnDownload').style.display = 'none';
+  $('btnMarkdownOnly').disabled = true;
+
+  addLog('info', '🚀 开始一键连续流程...');
+  addLog('info', `📸 图片数量: ${images.length}`);
+
+  try {
+    const resp = await fetch('/api/one-click', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        images: images,
+        attachmentNames: $('customNames').value,
+        customRanges: currentRanges,
+        header: docxHeader,
+        docxImageSizes: docxImageSizes
+      })
+    });
+    
+    const result = await resp.json();
+    
+    if (result.success) {
+      lastMarkdown = result.markdown;
+      generatedFilename = result.filename;
+      
+      const duration = Date.now() - startTime;
+      
+      // 显示输出
+      $('placeholder').style.display = 'none';
+      $('outputArea').style.display = 'block';
+      $('statImages').textContent = images.length;
+      $('statAttachments').textContent = result.attachments.length;
+      $('statDuration').textContent = formatDuration(duration);
+      
+      $('markdownRaw').textContent = lastMarkdown;
+      $('markdownPreview').innerHTML = marked.parse(lastMarkdown);
+      
+      // 自动切换到MD tab
+      $('previewHint').textContent = `⏱️ ${formatDuration(duration)}`;
+      
+      addLog('success', `🎉 全流程完成！耗时 ${formatDuration(duration)}`);
+      setStatus('success', `✅ 全流程完成 (${formatDuration(duration)})`);
+      
+      // 显示下载按钮
+      $('btnDownload').style.display = 'inline-flex';
+      $('btnMarkdownOnly').disabled = false;
+    } else {
+      setStatus('error', `❌ ${result.error}`);
+      addLog('error', `流程失败: ${result.error}`);
+      updatePhase('error', 'error');
+    }
+  } catch (err) {
+    setStatus('error', '❌ ' + err.message);
+    addLog('error', `异常: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🚀 一键生成';
+  }
+}
+
+// ============================================================
+// 仅生成 Markdown
+// ============================================================
+async function generateMarkdownOnly() {
+  if (images.length === 0) {
+    setStatus('error', '❌ 请先上传图片');
+    return;
+  }
+  
+  setStatus('running', '⏳ 正在生成 Markdown...');
+  
+  try {
+    const resp = await fetch('/api/generate-markdown', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        docContent: docxContent,
+        docTitle: docxTitle,
+        attachmentNames: $('customNames').value,
+        customRanges: currentRanges,
+        images: images,
+        header: docxHeader
+      })
+    });
+    
+    const result = await resp.json();
+    
+    if (result.success) {
+      lastMarkdown = result.markdown;
+      
+      $('placeholder').style.display = 'none';
+      $('outputArea').style.display = 'block';
+      $('statImages').textContent = images.length;
+      $('statAttachments').textContent = result.attachments.length;
+      
+      $('markdownRaw').textContent = lastMarkdown;
+      $('markdownPreview').innerHTML = marked.parse(lastMarkdown);
+      
+      setStatus('success', '✅ Markdown 已生成');
+    } else {
+      setStatus('error', `❌ ${result.error}`);
+    }
+  } catch (err) {
+    setStatus('error', '❌ ' + err.message);
+  }
+}
+
+// ============================================================
+// 下载 Word
+// ============================================================
+function downloadWord() {
+  if (!generatedFilename) {
+    setStatus('error', '❌ 尚未生成Word文档');
+    return;
+  }
+  
+  const link = document.createElement('a');
+  link.href = `/api/download/${generatedFilename}`;
+  link.download = `附件处理报告_${Date.now()}.docx`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  
+  addLog('success', '📥 Word文档已下载');
+  setStatus('success', '✅ 文档下载中...');
+}
+
+// ============================================================
+// 工具函数
+// ============================================================
+function formatDuration(ms) {
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}m${s}s`;
+}
+
+// ============================================================
+// 初始化
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+  loadRanges();
+  connectSSE();
+  setupDragDrop();
+  addLog('info', '📌 系统就绪，可拖拽文件夹到上传区域，或点击「一键生成」开始处理');
+});
+</script>
+
+</body>
+</html>
