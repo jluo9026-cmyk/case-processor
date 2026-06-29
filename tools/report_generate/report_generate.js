@@ -25,9 +25,10 @@ async function parseApiError(resp) {
 
 const api = {
   async checkStatus() {
-    const resp = await fetch('/backend-status');
+    const resp = await fetch('/api/health');
     if (!resp.ok) throw new Error('无法获取后端状态');
-    return resp.json();
+    const data = await resp.json();
+    return { ready: data.status === 'ok', port: null, message: data.status === 'ok' ? '✅ 后端已就绪' : '❌ 后端未就绪' };
   },
 
   async listPresetTemplates() {
