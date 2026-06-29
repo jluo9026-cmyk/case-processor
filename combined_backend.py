@@ -219,6 +219,194 @@ async def run_tool(request: Request):
 
 
 # ============ 下载 ============
+@app.post('/api/fill-excel')
+async def fill_excel(request: Request):
+    """填充Excel模板（结案审批表工具）"""
+    try:
+        form = await request.form()
+        template_file = form.get('template')
+        data_json = form.get('data', '{}')
+        data = json.loads(data_json)
+
+        if not template_file:
+            raise HTTPException(400, '请上传Excel模板文件')
+
+        content = await template_file.read()
+        if not content:
+            raise HTTPException(400, '文件内容为空')
+
+        # 使用 openpyxl 填充模板
+        import openpyxl
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(content))
+        ws = wb.active
+
+        field_keywords = {
+            'policyNo': ['保单号', '保单号码'],
+            'insuranceType': ['保险险种', '险种', '险别'],
+            'insured': ['投保人', '投保'],
+            'insuredPerson': ['被保险人', '伤者', '受伤人员', '出险人员'],
+            'accidentDate': ['出险时间', '出险日期', '事故发生时间', '事故日期'],
+            'accidentLocation': ['出险地点', '事故地点', '案发地点', '地点'],
+            'claimAmount': ['索赔金额', '理赔金额'],
+            'suggestion': ['赔付建议', '处理建议'],
+            'acceptDate': ['受案时间', '受理时间', '立案时间'],
+            'closeDate': ['结案时间', '完成时间'],
+            'investigator': ['调查员', '查勘员', '经办人'],
+            'insurancePeriod': ['保险期间', '保险期限'],
+            'accidentNature': ['事故性质', '事故类型'],
+        }
+
+        def safe_set_cell_value(ws, row, col, value):
+            for merged_range in ws.merged_cells.ranges:
+                if merged_range.min_row <= row <= merged_range.max_row and merged_range.min_col <= col <= merged_range.max_col:
+                    if row == merged_range.min_row and col == merged_range.min_col:
+                        ws.cell(row=row, column=col).value = value
+                        return True
+                    else:
+                        ws.cell(row=merged_range.min_row, column=merged_range.min_col).value = value
+                        return True
+            ws.cell(row=row, column=col).value = value
+            return True
+
+        filled = 0
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    cell_text = str(cell.value).strip()
+                    for field, keywords in field_keywords.items():
+                        if field in data and data[field]:
+                            for kw in keywords:
+                                if kw in cell_text:
+                                    if safe_set_cell_value(ws, cell.row, cell.column + 1, data[field]):
+                                        filled += 1
+                                    break
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f'结案审批表_{datetime.now().strftime("%Y%m%d")}.xlsx'
+
+        return FileResponse(
+            output,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            filename=filename,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        raise HTTPException(500, f'生成Excel失败: {str(e)}')
+
+
+@app.post('/api/process-docx')
+async def process_docx(request: Request):
+    """处理DOCX文档，替换目录表格（附件目录生成器工具）"""
+    try:
+        form = await request.form()
+        file = form.get('file')
+        attachments_json = form.get('attachments', '[]')
+        attachments = json.loads(attachments_json)
+
+        if not file:
+            raise HTTPException(400, '请上传DOCX文件')
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, '文件内容为空')
+
+        # 使用 python-docx 处理
+        from docx import Document as DocxDocument
+        import zipfile as docx_zip
+        from lxml import etree as docx_etree
+
+        nsp = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+
+        # 读取DOCX并解析表格
+        zip_in = docx_zip.ZipFile(io.BytesIO(content))
+        xml_content = zip_in.read('word/document.xml')
+        root = docx_etree.fromstring(xml_content)
+
+        # 找到所有表格
+        all_tables = root.findall('.//w:tbl', nsp)
+        if not all_tables:
+            raise HTTPException(400, '文档中未找到表格')
+
+        # 获取最后一个表格（目录表格）
+        last_table = all_tables[-1]
+
+        # 获取表格结构
+        tbl_grid = last_table.find('w:tblGrid', nsp)
+        tbl_pr = last_table.find('w:tblPr', nsp)
+
+        # 获取第一行作为模板行
+        rows = last_table.findall('w:tr', nsp)
+        if len(rows) < 2:
+            raise HTTPException(400, '表格行数不足')
+
+        header_row = rows[0]  # 表头
+        template_row = rows[1] if len(rows) > 1 else rows[0]  # 数据行模板
+
+        # 删除旧表格
+        body = root.find('.//w:body', nsp)
+        if body is not None:
+            for tbl in all_tables:
+                body.remove(tbl)
+
+        # 创建新表格
+        import copy
+        new_tbl = docx_etree.SubElement(body, f'{{{nsp["w"]}}}tbl')
+
+        # 添加表格属性
+        if tbl_pr is not None:
+            new_tbl.append(copy.deepcopy(tbl_pr))
+
+        # 添加表格网格
+        if tbl_grid is not None:
+            new_tbl.append(copy.deepcopy(tbl_grid))
+
+        # 添加表头
+        new_tbl.append(copy.deepcopy(header_row))
+
+        # 添加数据行
+        for i, att in enumerate(attachments):
+            new_row = copy.deepcopy(template_row)
+
+            # 替换序号和名称
+            for tc in new_row.findall('.//w:tc', nsp):
+                for t in tc.findall('.//w:t', nsp):
+                    if t.text:
+                        t.text = t.text.replace('1', str(i + 1))
+                        t.text = t.text.replace('附件一', f'附件{att.get("number", i+1)}')
+                        t.text = t.text.replace('附件名称', att.get('name', ''))
+
+            new_tbl.append(new_row)
+
+        # 生成输出
+        output_buffer = io.BytesIO()
+        with docx_zip.ZipFile(output_buffer, 'w', docx_zip.ZIP_DEFLATED) as oz:
+            for item in zip_in.infolist():
+                if item.filename == 'word/document.xml':
+                    new_xml = docx_etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+                    oz.writestr(item, new_xml)
+                else:
+                    oz.writestr(item, zip_in.read(item.filename))
+
+        output_buffer.seek(0)
+
+        return FileResponse(
+            output_buffer,
+            media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            filename=f'新目录_{datetime.now().strftime("%Y%m%d")}.docx'
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f'处理DOCX失败: {str(e)}')
+
+
 @app.get('/api/download/{report_id}')
 async def download_report(report_id: str):
     if report_id not in _generated_reports:

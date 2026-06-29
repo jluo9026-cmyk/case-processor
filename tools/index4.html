@@ -499,21 +499,35 @@
         updateAllPreviews();
     });
 
-    // ============ 生成文档 ============
-    generateBtn.addEventListener('click', async () => {
-        // 检查是否在 Electron 环境中（必须使用 Electron IPC 处理 DOCX）
-        if (!isElectron()) {
-            showStatus('❌ 请在案件处理启动器中打开此工具', 'error');
-            return;
-        }
+    // ============ 上传并读取DOCX文件（浏览器模式）============
+    function uploadAndReadFile() {
+        return new Promise((resolve, reject) => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.docx';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) { reject(new Error('未选择文件')); return; }
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                    resolve({ name: file.name, data: base64 });
+                } catch (err) {
+                    reject(new Error('读取文件失败: ' + err.message));
+                }
+            };
+            input.click();
+        });
+    }
 
+    // ============ 生成文档（Web版本 + Electron兼容）============
+    generateBtn.addEventListener('click', async () => {
         if (!currentTemplatePath) {
             showStatus('❌ 请先选择模板（原始 Word 文档）', 'error');
             return;
         }
 
         const attachments = parseAttachments(attachmentsInput.value);
-
         if (attachments.length === 0) {
             showStatus('⚠️ 请输入附件资料', 'error');
             return;
@@ -523,44 +537,72 @@
             generateBtn.disabled = true;
             generateBtn.textContent = '⏳ 正在处理...';
 
-            // 1. 读取模板文件
-            const readResult = await window.electronAPI.readFile(currentTemplatePath);
-            if (!readResult.success) {
-                showStatus('❌ 读取文件失败：' + readResult.error, 'error');
+            // Web 浏览器模式：上传文件到后端处理
+            if (!isElectron()) {
+                const file = fileInput.files[0];
+                if (!file) {
+                    showStatus('❌ 请选择模板文件', 'error');
+                    generateBtn.disabled = false;
+                    generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
+                    return;
+                }
+
+                // 构建附件数据
+                const attachmentItems = attachments.map(a => ({
+                    number: a.number,
+                    name: a.name
+                }));
+
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('attachments', JSON.stringify(attachmentItems));
+
+                const resp = await fetch('/api/process-docx', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!resp.ok) {
+                    let errMsg = '处理失败';
+                    try { const e = await resp.json(); errMsg = e.error || errMsg; } catch(e) {}
+                    throw new Error(errMsg);
+                }
+
+                // 下载生成的文件
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `新目录_${new Date().toISOString().slice(0,10)}.docx`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                showStatus(`✨ 生成成功！附件 ${attachments.length} 项已下载`, 'success');
                 generateBtn.disabled = false;
                 generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
                 return;
             }
 
-            // 2. 调用 IPC 替换表格
+            // Electron 模式：使用 IPC
+            const readResult = await window.electronAPI.readFile(currentTemplatePath);
+            if (!readResult.success) throw new Error('读取文件失败：' + readResult.error);
+
             showStatus('⏳ 正在处理文档...', 'info');
             const replaceResult = await window.electronAPI.replaceTable(readResult.data, [], attachments);
-            if (!replaceResult.success) {
-                showStatus('❌ 替换失败：' + replaceResult.error, 'error');
-                generateBtn.disabled = false;
-                generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
-                return;
-            }
+            if (!replaceResult.success) throw new Error('替换失败：' + replaceResult.error);
 
-            // 3. 保存新文档
             const filename = `新目录_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.docx`;
-            const saveResult = await window.electronAPI.saveFile({
-                title: '保存新目录文档',
-                defaultPath: filename
-            });
-            if (saveResult.canceled) {
-                generateBtn.disabled = false;
-                generateBtn.innerHTML = '🚀 一键替换目录 & 生成新文档';
-                return;
-            }
-            const outputPath = saveResult.filePath;
-
-            const writeResult = await window.electronAPI.writeFile(outputPath, replaceResult.data);
+            const saveResult = await window.electronAPI.saveFile({ title: '保存新目录文档', defaultPath: filename });
+            if (saveResult.canceled) return;
+            
+            const writeResult = await window.electronAPI.writeFile(saveResult.filePath, replaceResult.data);
             if (writeResult.success) {
-                showStatus(`✨ 生成成功！附件资料 ${attachments.length} 项已保存`, 'success');
-                outputInfoDiv.innerHTML = `📂 新文档位置：${escapeHtml(outputPath)}`;
+                showStatus(`✨ 生成成功！附件 ${attachments.length} 项`, 'success');
+                outputInfoDiv.innerHTML = `📂 ${escapeHtml(saveResult.filePath)}`;
             } else {
-                showStatus('❌ 保存失败：' + writeResult.error, 'error');
+                throw new Error('保存失败：' + writeResult.error);
             }
         } catch (err) {
             showStatus('❌ 处理失败：' + err.message, 'error');

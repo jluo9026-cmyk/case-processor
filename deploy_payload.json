@@ -1,0 +1,15 @@
+{
+  "type": "web_service",
+  "name": "case-processor",
+  "ownerId": "tea-d9160ne7r5hc73bmidng",
+  "repo": "https://github.com/jluo9026-cmyk/case-processor",
+  "autoDeploy": "yes",
+  "branch": "main",
+  "runtime": "docker",
+  "serviceDetails": {
+    "env": "docker",
+    "plan": "free",
+    "healthCheckPath": "/api/health",
+    "numInstances": 1
+  }
+}
