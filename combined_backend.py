@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from modules.app_core import app
 from modules.config import BASE_DIR as C_BASE_DIR, UPLOAD_DIR, OUTPUT_DIR
+# ===== 注册所有 API 路由 =====
+from modules import routes
 
 MIME = {
     '.html':'text/html; charset=utf-8','.css':'text/css','.js':'application/javascript',

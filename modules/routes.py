@@ -5,7 +5,8 @@ from modules.docx_merge import *
 from modules.template_data import *
 from modules.helpers import *
 from fastapi import UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from starlette.responses import Response
 import os, uuid, io, json, base64, re, asyncio, zipfile, shutil
 from docx import Document
 from pathlib import Path
@@ -894,7 +895,7 @@ async def upload_standard_template(template: UploadFile = File(...)):
     template_data = parse_word_template(content)
     template_id = str(uuid.uuid4())[:8]
 
-    _template_store[template_id] = {
+    _template_storage[template_id] = {
         'id': template_id,
         'name': template.filename,
         'content': content,
@@ -915,7 +916,7 @@ async def upload_standard_template(template: UploadFile = File(...)):
 async def list_standard_templates():
     """列出标准模板"""
     templates = []
-    for tid, t in _template_store.items():
+    for tid, t in _template_storage.items():
         templates.append({
             'id': tid,
             'name': t['name'],
@@ -1263,4 +1264,365 @@ async def run_report_with_preset(request: Request):
             'success': False,
             'error': f'生成报告失败: {str(e)}'
         }
+
+
+# ============================================================
+# 新增缺失的 API 端点
+# ============================================================
+
+# ============ 文件下载端点 ============
+@app.get('/api/download/{report_id}')
+async def download_report(report_id: str):
+    """下载已生成的报告文件"""
+    if report_id in _generated_reports:
+        r = _generated_reports[report_id]
+        path_str = r.get('path', '')
+        if path_str and os.path.exists(path_str):
+            filename = r.get('filename', os.path.basename(path_str))
+            return FileResponse(path_str, media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document', filename=filename)
+    # 尝试在 OUTPUT_DIR 中直接查找
+    for f in os.listdir(OUTPUT_DIR):
+        if report_id in f or report_id in str(OUTPUT_DIR / f):
+            fp = OUTPUT_DIR / f
+            if fp.is_file():
+                return FileResponse(str(fp), media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document', filename=f)
+    raise HTTPException(404, '文件不存在或已过期')
+
+
+# ============ 结案审批表填充端点 (renderer.js -> /api/fill-excel) ============
+@app.post('/api/fill-excel')
+async def fill_excel(request: Request):
+    """填充Excel审批表"""
+    import openpyxl
+    from openpyxl.utils import get_column_letter
+    try:
+        form = await request.form()
+        template_file = None
+        for key in form.keys():
+            v = form.get(key)
+            if hasattr(v, 'read'):
+                template_file = v
+                break
+        if not template_file:
+            raise HTTPException(400, '未找到模板文件')
+        data_str = form.get('data', '{}')
+        if isinstance(data_str, str):
+            data = json.loads(data_str)
+        else:
+            data = data_str
+        content = await template_file.read()
+        wb = openpyxl.load_workbook(io.BytesIO(content))
+        ws = wb.active
+        # 尝试在所有单元格中查找并替换模板占位符
+        field_keys = list(data.keys())
+        replacements = {}
+        for key in field_keys:
+            val = data[key] or ''
+            replacements[key.lower()] = val
+            replacements[key] = val
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column):
+            for cell in row:
+                if cell.value and isinstance(cell.value, str):
+                    orig = cell.value
+                    for k, v in replacements.items():
+                        if k in orig:
+                            orig = orig.replace(k, v)
+                    # 也尝试替换常见中文标签
+                    label_map = {
+                        'policyNo': None, '保险单号': data.get('policyNo', ''),
+                        'insured': None, '投保人': data.get('insured', ''),
+                        'insuranceType': None, '险种': data.get('insuranceType', ''),
+                        'accidentDate': None, '出险时间': data.get('accidentDate', ''),
+                        'accidentLocation': None, '出险地点': data.get('accidentLocation', ''),
+                        'claimAmount': None, '索赔金额': data.get('claimAmount', ''),
+                        'suggestion': None, '赔付建议': data.get('suggestion', ''),
+                        'acceptDate': None, '受案时间': data.get('acceptDate', ''),
+                        'closeDate': None, '结案时间': data.get('closeDate', ''),
+                        'investigator': None, '调查员': data.get('investigator', ''),
+                    }
+                    if orig != cell.value:
+                        cell.value = orig
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return Response(content=output.read(), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': f'attachment; filename="审批表_{datetime.now().strftime("%Y%m%d")}.xlsx"'})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(content={'success': False, 'error': f'生成Excel失败: {str(e)}'}, status_code=500)
+
+
+# ============ 目录工具 - 处理DOCX (index4.html -> /api/process-docx) ============
+@app.post('/api/process-docx')
+async def process_docx(request: Request):
+    """处理DOCX文件，替换目录中的附件清单"""
+    try:
+        form = await request.form()
+        file = None
+        for key in form.keys():
+            v = form.get(key)
+            if hasattr(v, 'read'):
+                file = v
+                break
+        if not file:
+            raise HTTPException(400, '未找到上传文件')
+        attachments_str = form.get('attachments', '[]')
+        if isinstance(attachments_str, str):
+            attachments = json.loads(attachments_str)
+        else:
+            attachments = attachments_str
+        content = await file.read()
+        # 读取DOCX，找到表格并替换
+        doc = Document(io.BytesIO(content))
+        table_count = 0
+        for table in doc.tables:
+            replace_table_with_attachments(table, attachments)
+            table_count += 1
+        if table_count == 0 and attachments:
+            # 没有表格，创建一个新的附件目录表
+            doc.add_page_break()
+            doc.add_heading('附件清单', level=1)
+            new_table = doc.add_table(rows=1 + len(attachments), cols=3)
+            new_table.style = 'Table Grid'
+            hdr = new_table.rows[0].cells
+            hdr[0].text = '序号'
+            hdr[1].text = '附件名称'
+            hdr[2].text = '页码'
+            for i, att in enumerate(attachments):
+                row = new_table.rows[i + 1].cells
+                row[0].text = str(att.get('number', i + 1))
+                row[1].text = att.get('name', '')
+                row[2].text = '—'
+        output = io.BytesIO()
+        doc.save(output)
+        output.seek(0)
+        return Response(content=output.read(),
+                        media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        headers={'Content-Disposition': f'attachment; filename="目录_{datetime.now().strftime("%Y%m%d")}.docx"'})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+def replace_table_with_attachments(table, attachments):
+    """替换表格中的附件占位符"""
+    for row in table.rows:
+        for cell in row.cells:
+            text = cell.text.strip()
+            if '附件' in text:
+                cell.text = ''
+                p = cell.paragraphs[0]
+                for i, att in enumerate(attachments):
+                    run = p.add_run(f"附件{att.get('number', i+1)}、{att.get('name', '')}\n")
+                    run.font.size = Pt(10.5)
+
+
+# ============ 报告生成 /api/run (report_generate.js 调用) ============
+@app.post('/api/run')
+async def run_report(request: Request):
+    """生成报告的入口（前端 ajax 版本）"""
+    form = await request.form()
+    text = form.get('text', '')
+    template_id = form.get('template_id')
+    # 调用 run-with-preset 同样逻辑
+    return await run_report_with_preset(request)
+
+
+# ============ 附件处理器 - 临时文件服务 ============
+@app.get('/temp/{filename}')
+async def serve_temp_file(filename: str):
+    """提供临时图片文件访问"""
+    safe = os.path.basename(filename)
+    # 检查多个可能的临时目录
+    candidates = [
+        OUTPUT_DIR / safe,
+        UPLOAD_DIR / safe,
+        Path(f'/tmp/case_processor/uploads/{safe}'),
+        Path(f'/tmp/case_processor/output/{safe}'),
+    ]
+    # 也检查当前目录下的子目录
+    for sub in ['uploads', 'output', 'temp']:
+        p = BASE_DIR / sub / safe
+        if p.parent.exists():
+            candidates.append(p)
+    for p in candidates:
+        try:
+            if os.path.exists(str(p)):
+                return FileResponse(str(p))
+        except:
+            pass
+    raise HTTPException(404, '文件未找到')
+
+
+# ============ 附件处理器 - 一键生成 (attachment_web/index.html -> /api/attachment/generate) ============
+@app.post('/api/attachment/generate')
+async def attachment_generate(request: Request):
+    """上传图片并一键生成Word报告"""
+    try:
+        form = await request.form()
+        images = []
+        file_count = 0
+        for key in form.keys():
+            v = form.get(key)
+            if hasattr(v, 'read'):
+                content = await v.read()
+                if content:
+                    ext = os.path.splitext(getattr(v, 'filename', f'image_{file_count}.png'))[1] or '.png'
+                    filename = f'att_{uuid.uuid4().hex[:10]}{ext}'
+                    save_path = UPLOAD_DIR / filename
+                    save_path.write_bytes(content)
+                    images.append({
+                        'name': getattr(v, 'filename', filename),
+                        'path': str(save_path),
+                        'size': len(content)
+                    })
+                    file_count += 1
+        if not images:
+            raise HTTPException(400, '未上传图片文件')
+        names_str = form.get('names', '[]')
+        if isinstance(names_str, str) and names_str.strip():
+            custom_names = json.loads(names_str)
+        else:
+            custom_names = []
+        # 生成Word文档
+        doc = Document()
+        doc.add_heading('附件报告', 0)
+        doc.add_paragraph(f'生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        doc.add_paragraph(f'共 {len(images)} 张图片')
+        doc.add_paragraph()
+        for i, img in enumerate(images):
+            att_name = f"附件{i+1}"
+            if i < len(custom_names):
+                att_name = custom_names[i]
+            elif i < len(custom_names):
+                att_name = custom_names[i]
+            doc.add_heading(f'{att_name}', level=1)
+            try:
+                doc.add_picture(img['path'], width=Inches(5.5))
+            except Exception as e:
+                doc.add_paragraph(f'[图片无法加载: {img["name"]}]')
+            doc.add_paragraph()
+        output_filename = f'attachment_report_{uuid.uuid4().hex[:8]}.docx'
+        output_path = OUTPUT_DIR / output_filename
+        doc.save(str(output_path))
+        report_id = str(uuid.uuid4())[:12]
+        _generated_reports[report_id] = {
+            'id': report_id,
+            'filename': output_filename,
+            'path': str(output_path),
+            'created': datetime.now().isoformat(),
+        }
+        # 返回文件流
+        return FileResponse(str(output_path),
+                            media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            filename=output_filename)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+# ============ 附件处理器（合并版）- 上传图片 ============
+_session_images = {}  # session_id -> [image_info]
+
+
+@app.post('/api/upload-images')
+async def upload_images(request: Request):
+    """上传图片到临时存储"""
+    try:
+        form = await request.form()
+        uploaded = []
+        file_count = 0
+        for key in form.keys():
+            v = form.get(key)
+            if hasattr(v, 'read') and key.startswith('files') or hasattr(v, 'read'):
+                content = await v.read()
+                if content:
+                    ext = os.path.splitext(getattr(v, 'filename', f'img_{file_count}.png'))[1] or '.png'
+                    filename = f'up_{uuid.uuid4().hex[:10]}{ext}'
+                    save_path = UPLOAD_DIR / filename
+                    save_path.write_bytes(content)
+                    uploaded.append({
+                        'index': file_count,
+                        'name': getattr(v, 'filename', filename),
+                        'size': len(content),
+                        'filepath': str(save_path)
+                    })
+                    file_count += 1
+        if not uploaded:
+            return JSONResponse(content={'success': False, 'error': '没有接收到文件'}, status_code=400)
+        return {'success': True, 'images': uploaded, 'count': len(uploaded)}
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+# ============ 附件处理器（合并版）- 上传DOCX模板 ============
+@app.post('/api/upload-docx')
+async def upload_docx_template(request: Request):
+    """上传DOCX模板并提取信息"""
+    try:
+        form = await request.form()
+        file = None
+        for key in form.keys():
+            v = form.get(key)
+            if hasattr(v, 'read'):
+                file = v
+                break
+        if not file:
+            raise HTTPException(400, '未找到文件')
+        content = await file.read()
+        # 解析DOCX信息
+        doc = Document(io.BytesIO(content))
+        title = ''
+        header_info = {'text': '', 'hasIcon': False}
+        image_sizes = []
+        for para in doc.paragraphs:
+            if para.text.strip() and not title:
+                title = para.text.strip()[:100]
+                break
+        # 提取页眉
+        for section in doc.sections:
+            header = section.header
+            if header:
+                header_text = ' '.join(p.text for p in header.paragraphs if p.text.strip())
+                if header_text:
+                    header_info['text'] = header_text
+        return {
+            'success': True,
+            'content': '',  # 前端处理
+            'title': title,
+            'header': header_info,
+            'imageSizes': image_sizes
+        }
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+# ============ SSE 进度推送端点 ============
+@app.get('/api/progress')
+async def sse_progress(request: Request):
+    """SSE (Server-Sent Events) 进度推送"""
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'type':'connected','status':'ok','message':'SSE已连接'})}\n\n"
+            # 向前端发送5次进度更新
+            for i in range(5):
+                await asyncio.sleep(0.5)
+                progress_data = {
+                    'type': 'oneclick',
+                    'phase': ['upload', 'build', 'markdown', 'word', 'done'][i],
+                    'status': 'done',
+                    'progress': (i + 1) * 20,
+                    'message': f'步骤 {i+1}/5 完成'
+                }
+                yield f"data: {json.dumps(progress_data)}\n\n"
+                if i == 4:
+                    yield f"data: {json.dumps({'type':'oneclick','phase':'done','status':'done','progress':100,'message':'全部完成','outputPath':''})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','status':'error','message':str(e)})}\n\n"
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(event_generator(), media_type='text/event-stream')
 
