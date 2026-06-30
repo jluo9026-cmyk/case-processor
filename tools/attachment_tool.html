@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>附件处理器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:#f0f2f5;padding:20px;min-height:100vh}
+.header{background:linear-gradient(135deg,#1e3a5f,#2563eb);color:#fff;padding:20px;text-align:center;border-radius:12px;margin-bottom:16px}
+.header h1{font-size:22px;margin-bottom:4px}
+.header p{opacity:0.85;font-size:14px}
+.container{max-width:1000px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.08)}
+.card-title{font-size:16px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.full{grid-column:1/-1}
+.upload-zone{border:2px dashed #ccc;border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:all 0.3s}
+.upload-zone:hover{border-color:#2563eb;background:#f8f9ff}
+.upload-zone .icon{font-size:42px;margin-bottom:8px;display:block}
+.upload-zone p{color:#666;font-size:14px}
+.file-tag{background:#e8f0fe;padding:4px 10px;border-radius:4px;font-size:12px;color:#1a73e8;margin:2px;display:inline-block}
+textarea{width:100%;min-height:160px;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:13px;resize:vertical;font-family:inherit}
+textarea:focus{outline:none;border-color:#2563eb}
+.btn{padding:12px 28px;border:none;border-radius:8px;font-size:15px;font-weight:500;cursor:pointer;transition:all 0.2s}
+.btn-success{background:linear-gradient(135deg,#11998e,#38ef7d);color:#fff;width:100%;padding:16px;font-size:17px}
+.btn-success:hover{opacity:0.9;transform:translateY(-1px)}
+.btn-success:disabled{opacity:0.5;cursor:not-allowed}
+.status{padding:12px;border-radius:8px;margin-top:12px;display:none;font-size:14px}
+.status.info{background:#d1ecf1;color:#0c5460;display:block}
+.status.success{background:#d4edda;color:#155724;display:block}
+.status.error{background:#f8d7da;color:#721c24;display:block}
+.bar{height:8px;background:#e9ecef;border-radius:4px;margin-top:12px;overflow:hidden;display:none}
+.fill{height:100%;background:linear-gradient(90deg,#2563eb,#22c55e);width:0%;transition:width 0.4s}
+.tip{font-size:13px;color:#666;margin-top:6px;text-align:center}
+.grid-imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(60px,1fr));gap:6px;margin-top:10px;max-height:200px;overflow-y:auto}
+.grid-imgs img{width:60px;height:60px;object-fit:cover;border-radius:6px;border:2px solid #e8f0fe}
+.figure{font-size:12px;color:#888;margin-top:10px;text-align:center}
+.footer{text-align:center;margin-top:20px;font-size:12px;color:#999}
+</style>
+</head>
+<body>
+<div class="header"><h1>📎 附件处理器</h1><p>上传图片 → 映射附件 → 生成Word文档</p></div>
+<div class="container">
+<div class="card">
+<div class="card-title">📥 上传图片</div>
+<div class="upload-zone" id="zone" onclick="document.getElementById('fileIn').click()">
+<span class="icon">🖼️</span>
+<p>点击上传图片（可多选）</p>
+<p style="font-size:12px;color:#999;margin-top:4px">支持 jpg/png/webp，每个附件图片按顺序排列</p>
+</div>
+<input type="file" id="fileIn" accept="image/*" multiple style="display:none">
+<div class="grid-imgs" id="preview"></div>
+<div class="figure" id="figure"></div>
+</div>
+<div class="card">
+<div class="card-title">📋 附件名称（可选）</div>
+<textarea id="names" placeholder="每行一个附件名称
+例如：
+附件一：事故现场照片
+附件二：医院病历
+附件三：保单复印件
+...
+不填则使用默认附件编号"></textarea>
+</div>
+<div class="card full">
+<div class="bar" id="bar"><div class="fill" id="fill"></div></div>
+<div class="tip" id="tip"></div>
+<button class="btn btn-success" id="go" disabled onclick="run()">🚀 一键生成附件报告</button>
+<div id="status"></div>
+</div>
+</div>
+<div class="footer">附件报告将自动下载为 Word (.docx) 格式</div>
+<script>
+let files=[];
+let zone=document.getElementById('zone');
+document.getElementById('fileIn').onchange=function(e){
+Array.from(e.target.files).forEach(f=>files.push(f));
+document.getElementById('go').disabled=files.length===0;
+document.getElementById('figure').textContent='已选择 '+files.length+' 张图片';
+let h='';files.forEach(f=>{h+='<img src="'+URL.createObjectURL(f)+'">'});
+document.getElementById('preview').innerHTML=h;
+};
+// 拖拽支持
+zone.addEventListener('dragover',e=>{e.preventDefault();zone.style.borderColor='#2563eb'});
+zone.addEventListener('dragleave',()=>{zone.style.borderColor='#ccc'});
+zone.addEventListener('drop',e=>{e.preventDefault();zone.style.borderColor='#ccc';
+Array.from(e.dataTransfer.files).forEach(f=>files.push(f));
+document.getElementById('go').disabled=files.length===0;
+document.getElementById('figure').textContent='已选择 '+files.length+' 张图片';
+let h='';files.forEach(f=>{h+='<img src="'+URL.createObjectURL(f)+'">'});
+document.getElementById('preview').innerHTML=h;
+});
+async function run(){
+if(!files.length)return;
+document.getElementById('go').disabled=true;
+document.getElementById('bar').style.display='block';
+document.getElementById('fill').style.width='10%';
+document.getElementById('tip').textContent='正在上传...';
+let s=document.getElementById('status');s.className='status info';s.textContent='正在处理，请稍候...';
+try{
+let fd=new FormData();files.forEach(f=>fd.append('images',f));
+let n=document.getElementById('names').value.trim();
+fd.append('names',JSON.stringify(n?n.split('\n').filter(l=>l.trim()):[]));
+document.getElementById('fill').style.width='50%';
+document.getElementById('tip').textContent='正在生成Word文档...';
+let r=await fetch('/api/attachment/generate',{method:'POST',body:fd});
+if(!r.ok)throw new Error((await r.text())||'生成失败');
+document.getElementById('fill').style.width='100%';
+document.getElementById('tip').textContent='✅ 下载中...';
+let b=await r.blob();let u=URL.createObjectURL(b);
+let a=document.createElement('a');a.href=u;a.download='附件报告_'+new Date().toISOString().slice(0,10)+'.docx';
+a.click();URL.revokeObjectURL(u);
+s.className='status success';s.textContent='✅ 生成成功！'+files.length+' 张图片已处理为附件报告';
+}catch(e){
+document.getElementById('fill').style.width='0%';s.className='status error';s.textContent='❌ '+e.message;
+}document.getElementById('go').disabled=false;setTimeout(()=>{document.getElementById('bar').style.display='none'},2000);}
+</script>
+</body>
+</html>

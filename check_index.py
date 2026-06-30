@@ -1,0 +1,10 @@
+import os
+os.chdir(r"e:\案件处理启动器")
+data = open("index.html", "r", encoding="utf-8").read()
+print("File length:", len(data))
+print("Has tool-grid:", "tool-grid" in data)
+print("Has renderer.js:", "renderer.js" in data)
+print("Has electronAPI:", "electronAPI" in data)
+print("Has 附件处理器:", "附件处理器" in data)
+print("First 200 chars:")
+print(data[:200])

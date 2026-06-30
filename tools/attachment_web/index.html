@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>附件处理器 - 一键连续流程</title>
+<style>
+  :root {
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --bg: #f8fafc;
+    --card-bg: #ffffff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .header { background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); color: white; padding: 1rem; text-align: center; }
+  .header h1 { font-size: 1.4rem; }
+  .header p { opacity: 0.85; font-size: 0.85rem; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 0.75rem; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
+  .full-width { grid-column: 1 / -1; }
+  .card { background: var(--card-bg); border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
+  .card-header { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; }
+  .card-body { padding: 0.75rem; }
+  .form-group { margin-bottom: 0.75rem; }
+  .form-group label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.25rem; }
+  .file-upload-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 1rem; text-align: center; cursor: pointer; transition: all 0.2s; }
+  .file-upload-zone:hover { border-color: var(--primary); background: rgba(37,99,235,0.03); }
+  .file-upload-zone.has-file { border-color: var(--success); background: rgba(34,197,94,0.05); }
+  .file-upload-zone .icon { font-size: 1.8rem; }
+  .file-upload-zone .hint { font-size: 0.75rem; color: var(--text-secondary); }
+  textarea { width: 100%; min-height: 140px; padding: 0.6rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; resize: vertical; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.6rem 1.2rem; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+  .btn-success { background: var(--success); color: white; }
+  .btn-success:hover:not(:disabled) { background: #16a34a; }
+  .btn-outline { background: white; color: var(--text); border: 1px solid var(--border); }
+  .btn-outline:hover:not(:disabled) { background: #f1f5f9; }
+  .btn-danger { background: var(--error); color: white; }
+  .btn-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+  .btn-large { padding: 0.8rem 2rem; font-size: 1rem; font-weight: 600; }
+  .status { padding: 0.6rem 0.8rem; border-radius: 8px; margin-bottom: 0.75rem; font-size: 0.85rem; }
+  .status-info { background: #eff6ff; color: #1e40af; }
+  .status-success { background: #f0fdf4; color: #166534; }
+  .status-error { background: #fef2f2; color: #991b1b; }
+  .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(50px, 1fr)); gap: 0.25rem; margin-top: 0.4rem; max-height: 160px; overflow-y: auto; }
+  .image-thumb { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; border: 2px solid transparent; }
+  .progress-panel { background: #f1f5f9; border-radius: 8px; padding: 0.75rem; margin-bottom: 0.75rem; }
+  .progress-panel.hidden { display: none; }
+  .progress-bar-outer { width: 100%; height: 12px; background: #e2e8f0; border-radius: 6px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: linear-gradient(90deg, #2563eb, #22c55e); border-radius: 6px; transition: width 0.4s ease; width: 0%; }
+  .progress-text { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.3rem; display: flex; justify-content: space-between; }
+  .phase-indicators { display: flex; gap: 0.5rem; margin: 0.5rem 0; justify-content: center; }
+  .phase-dot { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; font-size: 0.7rem; color: var(--text-secondary); }
+  .phase-dot .circle { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; background: white; transition: all 0.3s; }
+  .phase-dot.active .circle { border-color: var(--primary); background: var(--primary); color: white; }
+  .phase-dot.done .circle { border-color: var(--success); background: var(--success); color: white; }
+  .phase-dot.error .circle { border-color: var(--error); background: var(--error); color: white; }
+  .log-panel { background: #1e293b; border-radius: 8px; padding: 0.5rem; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.75rem; line-height: 1.5; margin-top: 0.5rem; }
+  .log-panel.hidden { display: none; }
+  .log-entry { color: #94a3b8; padding: 0.1rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .log-entry .time { color: #64748b; margin-right: 0.4rem; }
+  .log-entry.info { color: #93c5fd; }
+  .log-entry.success { color: #86efac; }
+  .log-entry.error { color: #fca5a5; }
+  .preview-card { background: white; border: 1px solid var(--border); border-radius: 8px; max-height: 400px; overflow-y: auto; }
+  .preview-card pre { white-space: pre-wrap; word-break: break-all; padding: 0.75rem; font-size: 0.8rem; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 0.5rem; }
+  .stat-card { background: #f8fafc; border-radius: 6px; padding: 0.5rem; text-align: center; }
+  .stat-number { font-size: 1.2rem; font-weight: 700; color: var(--primary); }
+  .stat-label { font-size: 0.7rem; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📎 附件处理器 - 一键连续流程</h1>
+  <p>上传 → 映射 → Markdown → Word，一键完成</p>
+</div>
+<div class="container">
+  <div class="grid">
+    <!-- 左侧：上传文件 -->
+    <div class="card">
+      <div class="card-header">📥 上传文件</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>🖼️ 图片文件 <span style="color:var(--error);">*</span></label>
+          <div class="file-upload-zone" id="imageZone" onclick="document.getElementById('imageInput').click()">
+            <div class="icon">🖼️</div>
+            <div style="font-size:0.85rem;">点击选择图片文件（可多选）</div>
+            <div class="hint">支持 jpg/png/webp</div>
+            <div class="file-name" id="imageCount" style="display:none;font-size:0.8rem;color:var(--success);margin-top:0.3rem;"></div>
+          </div>
+          <input type="file" id="imageInput" accept="image/*" multiple style="display:none">
+          <div class="image-grid" id="imageGrid"></div>
+        </div>
+      </div>
+    </div>
+    <!-- 中间：配置 -->
+    <div class="card">
+      <div class="card-header">⚙️ 配置</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>附件名称（每行一个）</label>
+          <textarea id="customNames" placeholder="附件一：现场照片
+附件二：监控视频截图
+附件三：询问笔录
+...（不填则使用默认名称）"></textarea>
+        </div>
+      </div>
+    </div>
+    <!-- 右侧：进度与操作 -->
+    <div class="card">
+      <div class="card-header">🚀 一键流程</div>
+      <div class="card-body">
+        <div class="progress-panel hidden" id="progressPanel">
+          <div class="phase-indicators">
+            <div class="phase-dot active" data-phase="upload"><div class="circle">📤</div><span>上传</span></div>
+            <div class="phase-dot" data-phase="process"><div class="circle">⚙️</div><span>处理</span></div>
+            <div class="phase-dot" data-phase="word"><div class="circle">📄</div><span>Word</span></div>
+            <div class="phase-dot" data-phase="done"><div class="circle">✅</div><span>完成</span></div>
+          </div>
+          <div class="progress-bar-outer"><div class="progress-bar-fill" id="progressFill"></div></div>
+          <div class="progress-text"><span id="progressMessage">准备就绪</span><span id="progressPercent">0%</span></div>
+        </div>
+        <div class="log-panel hidden" id="logPanel"><div id="logEntries"></div></div>
+        <div class="btn-row" style="justify-content:center;">
+          <button class="btn btn-success btn-large" onclick="startGenerate()" id="btnGenerate">🚀 一键生成</button>
+        </div>
+        <div id="statusArea"></div>
+      </div>
+    </div>
+  </div>
+  <!-- 底部预览 -->
+  <div class="full-width" style="margin-top:0.75rem;">
+    <div class="card">
+      <div class="card-header">👁️ 输出预览</div>
+      <div class="card-body">
+        <div id="placeholder">
+          <p style="color:var(--text-secondary);text-align:center;padding:1.5rem;">上传图片后点击「一键生成」开始处理</p>
+        </div>
+        <div id="outputArea" style="display:none;">
+          <div class="stats">
+            <div class="stat-card"><div class="stat-number" id="statImages">0</div><div class="stat-label">图片</div></div>
+            <div class="stat-card"><div class="stat-number" id="statAttachments">0</div><div class="stat-label">附件</div></div>
+            <div class="stat-card"><div class="stat-number" id="statDuration">-</div><div class="stat-label">耗时</div></div>
+          </div>
+          <div class="preview-card"><pre id="previewContent"></pre></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+let uploadedFiles = [];
+let startTime = 0;
+function $(id) { return document.getElementById(id); }
+function setStatus(type, msg) { $('statusArea').innerHTML = `<div class="status status-${type}">${msg}</div>`; }
+function addLog(level, message) {
+  const panel = $('logPanel'); panel.classList.remove('hidden');
+  const entries = $('logEntries');
+  const time = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.className = `log-entry ${level}`;
+  div.innerHTML = `<span class="time">[${time}]</span>${message}`;
+  entries.appendChild(div);
+  panel.scrollTop = panel.scrollHeight;
+}
+function updatePhase(phase) {
+  document.querySelectorAll('.phase-dot').forEach(dot => {
+    const p = dot.dataset.phase;
+    dot.classList.remove('active', 'done', 'error');
+    const order = ['upload', 'process', 'word', 'done'];
+    if (p === phase) dot.classList.add('active');
+    else if (order.indexOf(p) < order.indexOf(phase)) dot.classList.add('done');
+  });
+}
+
+document.getElementById('imageInput').addEventListener('change', (e) => {
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
+  uploadedFiles = uploadedFiles.concat(files);
+  const count = $('imageCount');
+  count.style.display = 'block';
+  count.textContent = `✅ ${uploadedFiles.length} 张图片`;
+  const grid = $('imageGrid');
+  grid.innerHTML = '';
+  uploadedFiles.forEach(f => {
+    const el = document.createElement('img');
+    el.className = 'image-thumb';
+    el.src = URL.createObjectURL(f);
+    el.title = f.name;
+    grid.appendChild(el);
+  });
+  setStatus('success', `✅ ${uploadedFiles.length} 张图片`);
+  addLog('success', `已选择 ${uploadedFiles.length} 张图片`);
+  $('btnGenerate').disabled = false;
+});
+
+async function startGenerate() {
+  if (uploadedFiles.length === 0) {
+    setStatus('error', '请先上传图片'); return;
+  }
+  $('btnGenerate').disabled = true;
+  $('progressPanel').classList.remove('hidden');
+  $('progressFill').style.width = '5%';
+  $('progressMessage').textContent = '正在上传...';
+  $('progressPercent').textContent = '5%';
+  updatePhase('upload');
+  addLog('info', `开始处理 ${uploadedFiles.length} 张图片...`);
+  startTime = Date.now();
+
+  try {
+    const formData = new FormData();
+    uploadedFiles.forEach(f => formData.append('images', f));
+    const namesText = $('customNames').value.trim();
+    const names = namesText ? namesText.split('\n').filter(l => l.trim()) : [];
+    formData.append('names', JSON.stringify(names));
+
+    $('progressFill').style.width = '40%';
+    $('progressMessage').textContent = '正在生成Word文档...';
+    $('progressPercent').textContent = '40%';
+    updatePhase('process');
+
+    const resp = await fetch('/api/attachment/generate', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      let err = '生成失败';
+      try { const e = await resp.json(); err = e.error || err; } catch(e) {}
+      throw new Error(err);
+    }
+
+    $('progressFill').style.width = '90%';
+    $('progressMessage').textContent = '生成完成，准备下载...';
+    $('progressPercent').textContent = '90%';
+    updatePhase('word');
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `附件报告_${new Date().toISOString().slice(0,10)}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    $('progressFill').style.width = '100%';
+    $('progressMessage').textContent = '✅ 完成！';
+    $('progressPercent').textContent = '100%';
+    updatePhase('done');
+    
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    $('statImages').textContent = uploadedFiles.length;
+    $('statAttachments').textContent = Math.min(uploadedFiles.length, 20);
+    $('statDuration').textContent = elapsed + 's';
+    $('outputArea').style.display = 'block';
+    $('placeholder').style.display = 'none';
+    $('previewContent').textContent = `处理完成！\n- 图片数量: ${uploadedFiles.length}\n- 生成文件: 附件报告_${new Date().toISOString().slice(0,10)}.docx\n- 耗时: ${elapsed}秒\n\nWord文档已自动下载。`;
+    
+    setStatus('success', `✅ 生成成功！${uploadedFiles.length} 张图片已处理`);
+    addLog('success', `✅ 全部完成！耗时 ${elapsed}秒`);
+  } catch (err) {
+    $('progressFill').style.width = '0%';
+    $('progressMessage').textContent = '❌ 失败';
+    updatePhase('error');
+    setStatus('error', '❌ ' + err.message);
+    addLog('error', err.message);
+  }
+  $('btnGenerate').disabled = false;
+}
+</script>
+</body>
+</html>
