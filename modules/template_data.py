@@ -8,7 +8,7 @@ def _get_preset_template(preset_id: str):
 PRESET_TEMPLATES = {
     'preset_1': {
         'id': 'preset_1',
-        'name': '模板一：王玉香案件调查报告',
+        'name': '恒：王玉香案件调查报告',
         'type': 'preset',
         'description': '标准保险公估调查报告格式',
         'content': '''关于被保险人{{insured_name}}调查报告
@@ -92,7 +92,7 @@ PRESET_TEMPLATES = {
     },
     'preset_2': {
         'id': 'preset_2',
-        'name': '模板二：张锋身故案调查报告',
+        'name': '德：张锋身故案调查报告',
         'type': 'preset',
         'description': '张锋身故案调查报告格式',
         'content': '''被保险人{{insured_name}}身故案调查报告
@@ -156,7 +156,7 @@ PRESET_TEMPLATES = {
     },
     'preset_3': {
         'id': 'preset_3',
-        'name': '模板三：胡宝林案件调查报告',
+        'name': '旭：胡宝林案件调查报告',
         'type': 'preset',
         'description': '胡宝林身故案调查报告格式',
         'content': '''被保险人{{insured_name}}案身故案调查报告
