@@ -1659,7 +1659,7 @@ async def upload_images(request: Request):
 # ============ 附件处理器（合并版）- 上传DOCX模板 ============
 @app.post('/api/upload-docx')
 async def upload_docx_template(request: Request):
-    """上传DOCX模板并提取信息"""
+    """上传DOCX模板——保存文件并提取信息供后续一键生成使用"""
     try:
         form = await request.form()
         file = None
@@ -1671,11 +1671,19 @@ async def upload_docx_template(request: Request):
         if not file:
             raise HTTPException(400, '未找到文件')
         content = await file.read()
+
+        # 保存模板文件
+        template_id = str(uuid.uuid4())[:12]
+        template_filename = f'template_{template_id}.docx'
+        template_path = UPLOAD_DIR / template_filename
+        template_path.write_bytes(content)
+
         # 解析DOCX信息
         doc = Document(io.BytesIO(content))
         title = ''
         header_info = {'text': '', 'hasIcon': False}
         image_sizes = []
+        # 提取第一个段落作为标题
         for para in doc.paragraphs:
             if para.text.strip() and not title:
                 title = para.text.strip()[:100]
@@ -1687,14 +1695,39 @@ async def upload_docx_template(request: Request):
                 header_text = ' '.join(p.text for p in header.paragraphs if p.text.strip())
                 if header_text:
                     header_info['text'] = header_text
+        # 从文档中提取占位图片尺寸（内联图片/形状）
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
+        for rel in doc.part.rels.values():
+            if "image" in rel.reltype:
+                try:
+                    image_blob = rel.target_part.blob
+                    from PIL import Image
+                    from io import BytesIO
+                    img = Image.open(BytesIO(image_blob))
+                    image_sizes.append({'width': img.width, 'height': img.height, 'rel_id': rel.rId})
+                except:
+                    pass
+        _template_storage[template_id] = {
+            'id': template_id,
+            'path': str(template_path),
+            'filename': template_filename,
+            'title': title,
+            'header': header_info,
+            'imageSizes': image_sizes,
+            'upload_time': datetime.now().isoformat()
+        }
+
         return {
             'success': True,
-            'content': '',  # 前端处理
+            'template_id': template_id,
+            'content': '',
             'title': title,
             'header': header_info,
             'imageSizes': image_sizes
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
 
 
@@ -1723,42 +1756,172 @@ async def reset_ranges():
 # ============ 附件处理器（合并版）- 一键生成 ============
 @app.post('/api/one-click')
 async def one_click_generate(request: Request):
-    """一键生成：图片→映射→Markdown→Word"""
+    """一键生成：使用已上传DOCX模板替换附件编号/名称/图片"""
     try:
         data = await request.json()
         images = data.get('images', [])
-        attachment_names = data.get('attachmentNames', '')
+        attachment_names_raw = data.get('attachmentNames', '')
         custom_ranges = data.get('customRanges', [])
         header = data.get('header', {})
         docx_image_sizes = data.get('docxImageSizes', [])
+        template_id = data.get('template_id', '')
+
+        # 解析附件名称列表
+        parsed_attachments = []  # [{number, name}, ...]
+        if attachment_names_raw and attachment_names_raw.strip():
+            for line in attachment_names_raw.strip().split('\n'):
+                line = line.strip()
+                if not line: continue
+                m = re.match(r'^附件([一二三四五六七八九十0-9零一二三四五六七八九十]+)[:：\s、]*(.*)', line)
+                if m:
+                    num_str = m.group(1).strip()
+                    name = m.group(2).strip()
+                    # 中文数字转阿拉伯
+                    cn_map = {'一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10'}
+                    if num_str in cn_map:
+                        num_str = cn_map[num_str]
+                    parsed_attachments.append({'number': num_str, 'name': name if name else f'附件{num_str}'})
+                else:
+                    # 纯名称行，自动编号
+                    parsed_attachments.append({'number': str(len(parsed_attachments)+1), 'name': line})
+        if not parsed_attachments:
+            for i in range(len(images)):
+                parsed_attachments.append({'number': str(i+1), 'name': f'附件{i+1}'})
+
         # 生成Markdown
         md_parts = [f'# 附件处理报告\n\n生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n\n']
-        attachments = []
-        for i, img in enumerate(images):
-            att_name = f'附件{i+1}'
-            md_parts.append(f'## {att_name}\n')
-            md_parts.append(f'![{img.get("name","图片")}]({img.get("filepath","")})\n\n')
-            attachments.append({'number': i+1, 'name': att_name})
+        for i, att in enumerate(parsed_attachments):
+            md_parts.append(f'## 附件{att["number"]}：{att["name"]}\n')
+            if i < len(images):
+                fp = images[i].get('filepath', '')
+                md_parts.append(f'![{att["name"]}]({fp})\n\n')
+            else:
+                md_parts.append('（无图片）\n\n')
         markdown = '\n'.join(md_parts)
-        # 生成Word
-        doc = Document()
-        doc.add_heading('附件处理报告', 0)
-        doc.add_paragraph(f'生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        for i, img in enumerate(images):
-            att_name = f'附件{i+1}'
-            doc.add_heading(att_name, level=1)
-            fp = img.get('filepath', '')
-            if fp and os.path.exists(fp):
-                try:
-                    doc.add_picture(fp, width=Inches(5.5))
-                except:
-                    doc.add_paragraph(f'[图片: {img.get("name","")}]')
+
+        # ====== 判断是否使用已上传的DOCX模板 ======
+        template_path = None
+        if template_id and template_id in _template_storage:
+            tinfo = _template_storage[template_id]
+            tp = tinfo.get('path', '')
+            if tp and os.path.exists(tp):
+                template_path = tp
+
+        if template_path:
+            # ====== 使用模板文件，替换其中的编号/名称/图片 ======
+            doc = Document(template_path)
+
+            # 1. 替换文档中的附件编号占位符（如"附件一"、"附件1"等）
+            for para in doc.paragraphs:
+                for run in para.runs:
+                    text = run.text
+                    if not text: continue
+                    for i, att in enumerate(parsed_attachments):
+                        # 匹配"附件X"模式
+                        for pattern in [f'附件{i+1}', f'附件{att["number"]}',
+                                        f'附件{["","一","二","三","四","五","六","七","八","九","十"][int(att["number"])] if att["number"].isdigit() and int(att["number"]) <= 10 else ""}']:
+                            if pattern and pattern in text:
+                                run.text = run.text.replace(pattern, f'附件{att["number"]}')
+                                break
+
+            # 2. 替换表格中的附件名称
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            for run in para.runs:
+                                text = run.text
+                                if not text: continue
+                                # 替换"附件X"编号
+                                for i, att in enumerate(parsed_attachments):
+                                    cn = ['','一','二','三','四','五','六','七','八','九','十']
+                                    cn_num = cn[int(att['number'])] if att['number'].isdigit() and int(att['number']) <= 10 else att['number']
+                                    for p in [f'附件{i+1}', f'附件{att["number"]}', f'附件{cn_num}']:
+                                        if p in run.text:
+                                            run.text = run.text.replace(p, f'附件{att["number"]}')
+                                            break
+                                # 替换附件名称（找"附件X："后的名称文本）
+                                name_match = re.match(r'^附件\d+[：:]\s*(.*)', run.text)
+                                if name_match:
+                                    for i, att in enumerate(parsed_attachments):
+                                        if f'附件{att["number"]}' in run.text:
+                                            run.text = f'附件{att["number"]}：{att["name"]}'
+                                            break
+
+            # 3. 替换图片占位符
+            img_idx = 0
+            inline_shapes = doc.inline_shapes
+            for block in doc.element.body:
+                if block.tag.endswith('}p'):
+                    # 检查段落中的图片
+                    drawings = block.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+                    if drawings and img_idx < len(images):
+                        # 找到这个drawing，尝试替换
+                        fp = images[img_idx].get('filepath', '')
+                        if fp and os.path.exists(fp):
+                            try:
+                                # 删除旧图片
+                                for d in drawings:
+                                    block.remove(d)
+                                # 在段落后添加新图片
+                                from docx.oxml.ns import qn
+                                # 用python-docx方式添加图片到段落
+                                p_elem = block
+                                # 通过内联形状
+                                new_run_elem = doc.element.makeelement(qn('w:r'), {})
+                                p_elem.append(new_run_elem)
+                                # 使用python-docx添加图片
+                                for p_idx, p in enumerate(doc.paragraphs):
+                                    if p._element is block:
+                                        p.add_run().add_picture(fp, width=Inches(5.5))
+                                        break
+                            except Exception as e:
+                                print(f'[替换图片] 失败: {e}')
+                            img_idx += 1
+
+            # 保存
+            filename = f'oneclick_{uuid.uuid4().hex[:8]}.docx'
+            out_path = OUTPUT_DIR / filename
+            doc.save(str(out_path))
+            _generated_reports[filename] = {
+                'id': filename,
+                'filename': filename,
+                'path': str(out_path),
+                'created': datetime.now().isoformat()
+            }
+            attachments_list = [{'number': int(att['number']), 'name': att['name']} for att in parsed_attachments]
+            return {'success': True, 'markdown': markdown, 'filename': filename, 'attachments': attachments_list}
+        else:
+            # ====== 无模板，直接生成新文档 ======
+            doc = Document()
+            doc.add_heading('附件处理报告', 0)
+            doc.add_paragraph(f'生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+            doc.add_paragraph(f'共 {len(parsed_attachments)} 个附件')
             doc.add_paragraph()
-        filename = f'oneclick_{uuid.uuid4().hex[:8]}.docx'
-        out_path = OUTPUT_DIR / filename
-        doc.save(str(out_path))
-        return {'success': True, 'markdown': markdown, 'filename': filename, 'attachments': attachments}
+            for i, att in enumerate(parsed_attachments):
+                doc.add_heading(f'附件{att["number"]}：{att["name"]}', level=1)
+                if i < len(images):
+                    fp = images[i].get('filepath', '')
+                    if fp and os.path.exists(fp):
+                        try:
+                            doc.add_picture(fp, width=Inches(5.5))
+                        except:
+                            doc.add_paragraph(f'[图片: {images[i].get("name","")}]')
+                doc.add_paragraph()
+            filename = f'oneclick_{uuid.uuid4().hex[:8]}.docx'
+            out_path = OUTPUT_DIR / filename
+            doc.save(str(out_path))
+            _generated_reports[filename] = {
+                'id': filename,
+                'filename': filename,
+                'path': str(out_path),
+                'created': datetime.now().isoformat()
+            }
+            attachments_list = [{'number': int(att['number']), 'name': att['name']} for att in parsed_attachments]
+            return {'success': True, 'markdown': markdown, 'filename': filename, 'attachments': attachments_list}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
 
 # ============ 附件处理器（合并版）- 仅生成Markdown ============
