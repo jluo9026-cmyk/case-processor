@@ -26,3 +26,6 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
+
+# ===== 注册所有 API 路由（重要：必须在这里 import，才能被 uvicorn 加载）=====
+import modules.routes as _routes
