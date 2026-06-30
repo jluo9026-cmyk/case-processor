@@ -1483,16 +1483,19 @@ async def process_docx(request: Request):
 
 
 def replace_table_with_attachments(table, attachments):
-    """替换表格中的附件占位符——每个包含"附件"的单元格填入一个附件"""
+    """替换表格附件清单：保留序号列不动，仅将附件名称填入包含"附件"的单元格"""
     att_index = 0
     for row in table.rows:
-        for cell in row.cells:
+        cells = row.cells
+        for col_idx, cell in enumerate(cells):
+            # 第一列（序号列）跳过不处理
+            if col_idx == 0:
+                continue
             text = cell.text.strip()
             if '附件' in text and att_index < len(attachments):
-                att = attachments[att_index]
                 cell.text = ''
                 p = cell.paragraphs[0]
-                run = p.add_run(f"附件{att.get('number', att_index+1)}、{att.get('name', '')}")
+                run = p.add_run(attachments[att_index]['name'])
                 run.font.size = Pt(10.5)
                 att_index += 1
 
