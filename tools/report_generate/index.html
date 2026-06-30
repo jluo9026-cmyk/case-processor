@@ -36,32 +36,6 @@
       </div>
     </div>
 
-    <!-- ========== 新增：上传待转换报告 ========== -->
-    <div class="card" id="convertCard">
-      <div class="card-title">🔄 上传待转换报告 <span class="badge" style="background:#8b5cf6;color:#fff;">DOCX转换</span></div>
-      <p style="color:#64748b;font-size:13px;margin:0 0 12px 0;">上传一份 .docx 报告文件，根据已选择的模板自动转换为标准格式</p>
-      <div class="upload-area" id="convertDropZone" style="border-color:#8b5cf6;background:#f5f3ff;">
-        <div class="icon">📄</div>
-        <p>拖拽 .docx 文件到此处，或点击选择</p>
-        <div class="hint">支持 .docx 格式，单个文件</div>
-      </div>
-      <input type="file" id="convertFileInput" accept=".docx" style="display:none">
-      <div class="file-list" id="convertFileInfo" style="display:none;">
-        <span class="file-tag" style="background:#f3e8ff;border-color:#8b5cf6;color:#8b5cf6;">📄 <span id="convertFileName"></span></span>
-        <span id="convertFileRemove" style="cursor:pointer;color:#ef4444;font-size:18px;margin-left:8px;">×</span>
-      </div>
-      <div class="actions" style="margin-top:12px;display:flex;gap:8px;">
-        <button class="btn btn-primary" id="btnConvertDocx" disabled>🔄 开始转换</button>
-        <button class="btn btn-outline" id="btnDownloadConverted" style="display:none;">📥 下载转换结果</button>
-      </div>
-      <div class="progress" id="convertProgress" style="display:none;">
-        <div class="progress-bar"><div class="progress-bar-fill" id="convertProgressFill"></div></div>
-        <div class="progress-text" id="convertProgressText">准备中...</div>
-      </div>
-      <div class="error" id="convertErrorBox" style="display:none;"></div>
-    </div>
-    <!-- ========== 新增结束 ========== -->
-
     <div class="card">
       <div class="card-title">🖼️ 现场图片 <span class="badge">最多28张</span></div>
       <div class="upload-area" id="dropZone">
