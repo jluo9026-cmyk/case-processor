@@ -48,7 +48,7 @@ body{font-family:"Microsoft YaHei",sans-serif;background:linear-gradient(135deg,
 <div class="i" onclick="window.open('/tools/附件处理器-合并版/index.html')"><div class="ic">🖼️</div><div class="nm">附件处理器</div><div class="de">图片→Markdown→Word</div></div>
 </div>
 <div class="b">✅ 共 5 个工具</div>
-<div class="f">深圳市德泰保险公估有限公司</div>
+<div class="f"></div>
 </div></body></html>"""
 
 @app.get('/')

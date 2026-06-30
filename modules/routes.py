@@ -1766,6 +1766,29 @@ async def one_click_generate(request: Request):
         docx_image_sizes = data.get('docxImageSizes', [])
         template_id = data.get('template_id', '')
 
+        # 中文数字转阿拉伯数字（支持多字如"十一""二十三"）
+        def chinese_num_to_str(cn):
+            if cn.isdigit():
+                return cn
+            cn_map = {'零':'0','一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10'}
+            if cn in cn_map:
+                return cn_map[cn]
+            # 多字组合：十一、十一、二十一
+            try:
+                if '十' in cn:
+                    parts = cn.split('十')
+                    if parts[0] == '' and parts[1] == '':
+                        return '10'
+                    elif parts[0] == '':
+                        return str(10 + int(cn_map.get(parts[1], '0')))
+                    elif parts[1] == '':
+                        return str(int(cn_map.get(parts[0], '0')) * 10)
+                    else:
+                        return str(int(cn_map.get(parts[0], '0')) * 10 + int(cn_map.get(parts[1], '0')))
+            except:
+                pass
+            return cn
+
         # 解析附件名称列表
         parsed_attachments = []  # [{number, name}, ...]
         if attachment_names_raw and attachment_names_raw.strip():
@@ -1776,10 +1799,7 @@ async def one_click_generate(request: Request):
                 if m:
                     num_str = m.group(1).strip()
                     name = m.group(2).strip()
-                    # 中文数字转阿拉伯
-                    cn_map = {'一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10'}
-                    if num_str in cn_map:
-                        num_str = cn_map[num_str]
+                    num_str = chinese_num_to_str(num_str)
                     parsed_attachments.append({'number': num_str, 'name': name if name else f'附件{num_str}'})
                 else:
                     # 纯名称行，自动编号
@@ -1889,7 +1909,13 @@ async def one_click_generate(request: Request):
                 'path': str(out_path),
                 'created': datetime.now().isoformat()
             }
-            attachments_list = [{'number': int(att['number']), 'name': att['name']} for att in parsed_attachments]
+            attachments_list = []
+            for att in parsed_attachments:
+                try:
+                    n = int(att['number'])
+                except ValueError:
+                    n = len(attachments_list) + 1
+                attachments_list.append({'number': n, 'name': att['name']})
             return {'success': True, 'markdown': markdown, 'filename': filename, 'attachments': attachments_list}
         else:
             # ====== 无模板，直接生成新文档 ======
@@ -1917,7 +1943,13 @@ async def one_click_generate(request: Request):
                 'path': str(out_path),
                 'created': datetime.now().isoformat()
             }
-            attachments_list = [{'number': int(att['number']), 'name': att['name']} for att in parsed_attachments]
+            attachments_list = []
+            for att in parsed_attachments:
+                try:
+                    n = int(att['number'])
+                except ValueError:
+                    n = len(attachments_list) + 1
+                attachments_list.append({'number': n, 'name': att['name']})
             return {'success': True, 'markdown': markdown, 'filename': filename, 'attachments': attachments_list}
     except Exception as e:
         import traceback
