@@ -633,7 +633,6 @@ function renderPresetTemplates(presets) {
       <div class="preset-template-icon">${icon}</div>
       <div class="preset-template-info">
         <div class="preset-template-name">${preset.name}</div>
-        ${preset.description ? `<div class="preset-template-desc">${preset.description}</div>` : ''}
       </div>
       <div class="preset-template-check">✓</div>
     `;
