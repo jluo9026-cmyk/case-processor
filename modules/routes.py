@@ -1457,13 +1457,59 @@ def replace_table_with_attachments(table, attachments):
 @app.post('/api/run')
 async def run_report(request: Request):
     """生成报告的入口（前端 ajax 版本）"""
-    form = await request.form()
-    text = form.get('text', '')
-    template_id = form.get('template_id')
-    # 调用 run-with-preset 同样逻辑
-    return await run_report_with_preset(request)
-
-
+    # 直接解析表单数据，不再二次调用 run_report_with_preset（避免 request.form() 只能读取一次的问题）
+    try:
+        form = await request.form()
+        template_id = form.get('template_id', '')
+        # 收集走访内容
+        scene_investigation = form.get('sceneInvestigation', '')
+        police_station_record = form.get('policeStationRecord', '')
+        traffic_police_record = form.get('trafficPoliceRecord', '')
+        hospital_record = form.get('hospitalRecord', '')
+        combined_investigation = []
+        if scene_investigation:
+            combined_investigation.append(f"【走访现场】\n{scene_investigation}")
+        if police_station_record:
+            combined_investigation.append(f"【派出所调查】\n{police_station_record}")
+        if traffic_police_record:
+            combined_investigation.append(f"【交警队调查】\n{traffic_police_record}")
+        if hospital_record:
+            combined_investigation.append(f"【医院调查】\n{hospital_record}")
+        investigation_text = '\n\n'.join(combined_investigation) if combined_investigation else ''
+        # 获取模板数据并生成基础报告内容
+        selected_template = PRESET_TEMPLATES.get(template_id, PRESET_TEMPLATES['preset_1'])
+        template_content = selected_template['content']
+        template_name = selected_template['name']
+        report_content = template_content
+        if investigation_text:
+            report_content = report_content.replace('{{investigation_content}}', investigation_text)
+        # 替换基本占位符
+        for placeholder, default_value in [
+            ('{{insured_name}}', '待核实'), ('{{insurance_company}}', '保险公司'),
+            ('{{policy_no}}', '待核实'), ('{{insurance_period}}', '待核实'),
+            ('{{insurance_type}}', '待核实'), ('{{accident_time}}', '待核实'),
+            ('{{investigator}}', '待填写'), ('{{reviewer}}', '待填写'),
+            ('{{company_name}}', '深圳市恒泰诚信息咨询有限公司'),
+            ('{{report_date}}', datetime.now().strftime('%Y年%m月%d日')),
+        ]:
+            if placeholder in report_content:
+                report_content = report_content.replace(placeholder, default_value)
+        report_content = re.sub(r'\{\{[^}]+\}\}', '待核实', report_content)
+        return {
+            'success': True,
+            'report_content': report_content,
+            'template_id': template_id or 'preset_1',
+            'template_name': template_name,
+            'used_ai_fallback': True,
+            'total_images': 0,
+            'combined_text': '',
+            'investigation_text': investigation_text
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'生成报告失败: {str(e)}'
+        }
 # ============ 附件处理器 - 临时文件服务 ============
 @app.get('/temp/{filename}')
 async def serve_temp_file(filename: str):
