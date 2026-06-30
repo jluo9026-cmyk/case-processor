@@ -6,7 +6,7 @@ services:
   - type: web
     name: case-processor
     runtime: docker
-    repo: https://github.com/YOUR_USERNAME/case-processor
+    repo: https://github.com/jluo9026-cmyk/case-processor
     plan: free
     
     # 健康检查路径
