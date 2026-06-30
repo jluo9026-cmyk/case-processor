@@ -655,8 +655,15 @@ let convertElements = null;
 
 function getConvertElements() {
   if (convertElements) return convertElements;
+  const dropZone = document.getElementById('convertDropZone');
+  // 如果页面中没有DOCX转换功能的DOM元素，返回标记为不可用的对象
+  if (!dropZone) {
+    convertElements = { _available: false };
+    return convertElements;
+  }
   convertElements = {
-    dropZone: document.getElementById('convertDropZone'),
+    _available: true,
+    dropZone: dropZone,
     fileInput: document.getElementById('convertFileInput'),
     fileInfo: document.getElementById('convertFileInfo'),
     fileName: document.getElementById('convertFileName'),
@@ -805,6 +812,8 @@ function resetConvertFile() {
 
 function bindConvertEvents() {
   const el = getConvertElements();
+  // 如果页面中没有DOCX转换功能的DOM元素，跳过事件绑定
+  if (!el._available) return;
   
   el.dropZone.addEventListener('click', () => el.fileInput.click());
   el.dropZone.addEventListener('dragover', e => { e.preventDefault(); el.dropZone.classList.add('dragover'); });
