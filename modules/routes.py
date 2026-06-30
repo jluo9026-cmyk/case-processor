@@ -1320,7 +1320,7 @@ async def download_report(report_id: str):
 # ============ 结案审批表填充端点 (renderer.js -> /api/fill-excel) ============
 @app.post('/api/fill-excel')
 async def fill_excel(request: Request):
-    """填充Excel审批表"""
+    """填充Excel审批表——保留标签单元格，将值填入同行相邻单元格"""
     import openpyxl
     from openpyxl.utils import get_column_letter
     try:
@@ -1341,37 +1341,79 @@ async def fill_excel(request: Request):
         content = await template_file.read()
         wb = openpyxl.load_workbook(io.BytesIO(content))
         ws = wb.active
-        # 构建中英文标签替换映射
-        label_replacements = {}
-        label_map = {
-            'policyNo': data.get('policyNo', ''), '保单号': data.get('policyNo', ''),
-            'insured': data.get('insured', ''), '投保人': data.get('insured', ''),
-            'insuredPerson': data.get('insuredPerson', ''), '被保险人': data.get('insuredPerson', ''),
-            'insuranceType': data.get('insuranceType', ''), '险种': data.get('insuranceType', ''),
-            'accidentDate': data.get('accidentDate', ''), '出险时间': data.get('accidentDate', ''),
-            'accidentLocation': data.get('accidentLocation', ''), '出险地点': data.get('accidentLocation', ''),
-            'claimAmount': data.get('claimAmount', ''), '索赔金额': data.get('claimAmount', ''),
-            'suggestion': data.get('suggestion', ''), '赔付建议': data.get('suggestion', ''),
-            'acceptDate': data.get('acceptDate', ''), '受案时间': data.get('acceptDate', ''),
-            'closeDate': data.get('closeDate', ''), '结案时间': data.get('closeDate', ''),
-            'investigator': data.get('investigator', ''), '调查员': data.get('investigator', ''),
-        }
-        for label_key, label_value in label_map.items():
-            if label_value:
-                label_replacements[label_key] = label_value
-        # 尝试在所有单元格中查找并替换
+
+        # 构建标签→值的映射（中英文标签都匹配）
+        label_to_value = {}
+        field_mappings = [
+            ('policyNo', ['保单号', '保单号码', 'policyNo']),
+            ('insured', ['投保人', '投保人名称', 'insured']),
+            ('insuredPerson', ['被保险人', '伤者', 'insuredPerson']),
+            ('insuranceType', ['险种', '保险险种', 'insuranceType']),
+            ('accidentDate', ['出险时间', '事故发生时间', 'accidentDate']),
+            ('accidentLocation', ['出险地点', '案发地点', 'accidentLocation']),
+            ('claimAmount', ['索赔金额', '理赔金额', 'claimAmount']),
+            ('suggestion', ['赔付建议', '处理建议', 'suggestion']),
+            ('acceptDate', ['受案时间', '受理时间', 'acceptDate']),
+            ('closeDate', ['结案时间', '完成时间', 'closeDate']),
+            ('investigator', ['调查员', '查勘员', 'investigator']),
+            ('insurancePeriod', ['保险期间', '保险期限', 'insurancePeriod']),
+            ('accidentNature', ['事故性质', '事故类型', 'accidentNature']),
+        ]
+        for field_key, labels in field_mappings:
+            value = data.get(field_key, '')
+            if value:
+                for label in labels:
+                    label_to_value[label] = value
+
         modified_count = 0
+        # 第一遍：找到标签所在单元格，将值填入同行右侧（非标签）单元格
         for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column):
-            for cell in row:
-                if cell.value and isinstance(cell.value, str):
-                    orig = str(cell.value)
-                    new_val = orig
-                    for search_key, replace_val in label_replacements.items():
-                        if search_key in new_val:
-                            new_val = new_val.replace(search_key, str(replace_val))
-                    if new_val != orig:
-                        cell.value = new_val
+            row_cells = list(row)
+            for col_idx, cell in enumerate(row_cells):
+                if not cell.value or not isinstance(cell.value, str):
+                    continue
+                cell_text = str(cell.value).strip()
+                # 检查是否匹配某个标签
+                matched_label = None
+                matched_value = None
+                for label, val in label_to_value.items():
+                    if label in cell_text or cell_text.lower() == label.lower():
+                        matched_label = label
+                        matched_value = val
+                        break
+                if matched_label is None:
+                    continue
+
+                # 优先填到右侧相邻单元格（同行的下一列）
+                filled = False
+                if col_idx + 1 < len(row_cells):
+                    right_cell = row_cells[col_idx + 1]
+                    # 如果右侧单元格是空、或包含占位符/旧值，就替换它
+                    if right_cell.value is None or str(right_cell.value).strip() in ('', '待填写', '-', '—', '待核实', '待定'):
+                        right_cell.value = matched_value
                         modified_count += 1
+                        filled = True
+                    else:
+                        # 右侧已有内容，检查是否也包含同标签（可能是个占位模板）
+                        right_text = str(right_cell.value).strip()
+                        # 如果不是标签文字，直接覆盖
+                        is_label = any(lbl in right_text or right_text.lower() == lbl.lower() for lbl in label_to_value)
+                        if not is_label:
+                            right_cell.value = matched_value
+                            modified_count += 1
+                            filled = True
+
+                if not filled:
+                    # 如果右侧无法填入，直接在原单元格中把标签替换为值（保留标签前缀）
+                    if cell_text == matched_label or cell_text == f'{matched_label}：':
+                        cell.value = f'{matched_label}：{matched_value}'
+                    elif matched_label in cell_text:
+                        cell.value = cell_text.replace(matched_label, f'{matched_label}：{matched_value}')
+                    else:
+                        # 兜底：直接替换
+                        cell.value = f'{matched_label}：{matched_value}'
+                    modified_count += 1
+
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
