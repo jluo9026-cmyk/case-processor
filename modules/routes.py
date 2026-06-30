@@ -1441,16 +1441,18 @@ async def process_docx(request: Request):
 
 
 def replace_table_with_attachments(table, attachments):
-    """替换表格中的附件占位符"""
+    """替换表格中的附件占位符——每个包含"附件"的单元格填入一个附件"""
+    att_index = 0
     for row in table.rows:
         for cell in row.cells:
             text = cell.text.strip()
-            if '附件' in text:
+            if '附件' in text and att_index < len(attachments):
+                att = attachments[att_index]
                 cell.text = ''
                 p = cell.paragraphs[0]
-                for i, att in enumerate(attachments):
-                    run = p.add_run(f"附件{att.get('number', i+1)}、{att.get('name', '')}\n")
-                    run.font.size = Pt(10.5)
+                run = p.add_run(f"附件{att.get('number', att_index+1)}、{att.get('name', '')}")
+                run.font.size = Pt(10.5)
+                att_index += 1
 
 
 # ============ 报告生成 /api/run (report_generate.js 调用) ============
