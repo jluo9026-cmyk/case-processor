@@ -41,13 +41,12 @@ body{font-family:"Microsoft YaHei",sans-serif;background:linear-gradient(135deg,
 </style></head><body><div class="c">
 <div class="h"><h1>📋 案件处理启动器</h1><p>集成多个案件处理工具</p></div>
 <div class="g">
-<div class="i" onclick="window.open('/report-standard')"><div class="ic">�</div><div class="nm">报告标准化</div><div class="de">DOCX格式转换+预设模板</div></div>
-<div class="i" onclick="window.open('/tools/report_generate/index.html')"><div class="ic">�</div><div class="nm">报告生成</div><div class="de">AI生成勘查报告</div></div>
+<div class="i" onclick="window.open('/tools/report_generate/index.html')"><div class="ic">📋</div><div class="nm">报告生成</div><div class="de">AI生成勘查报告</div></div>
 <div class="i" onclick="window.open('/tools/index4.html')"><div class="ic">📑</div><div class="nm">目录工具</div><div class="de">附件清单表格</div></div>
 <div class="i" onclick="window.open('/tools/index3.html')"><div class="ic">✅</div><div class="nm">结案审批表</div><div class="de">填写结案审批表</div></div>
 <div class="i" onclick="window.open('/tools/附件处理器-合并版/index.html')"><div class="ic">🖼️</div><div class="nm">附件处理器</div><div class="de">图片→Markdown→Word</div></div>
 </div>
-<div class="b">✅ 共 5 个工具</div>
+<div class="b">✅ 共 4 个工具</div>
 <div class="f">深圳市德泰保险公估有限公司</div>
 </div></body></html>"""
 
@@ -86,9 +85,10 @@ if __name__=='__main__':
     p=int(os.environ.get('PORT',10000))
     w=int(os.environ.get('WORKERS',0))
     kw={}
+    # 重要：多 workers 模式下内存中的 _generated_reports/_template_storage 不共享，
+    # 因此生产环境只能使用单 worker，通过 Gunicorn 多进程部署时需改用文件存储。
     if w>0:
         kw['workers']=w
     else:
-        # 自动检测 CPU 核心数，至少使用 2 个 worker，最多 4 个
-        kw['workers']=max(2,min(multiprocessing.cpu_count(),4))
+        kw['workers']=1
     uvicorn.run('combined_backend:app',host='0.0.0.0',port=p,log_level='info',access_log=False,timeout_keep_alive=600,**kw)

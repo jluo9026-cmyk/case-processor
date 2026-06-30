@@ -1341,35 +1341,37 @@ async def fill_excel(request: Request):
         content = await template_file.read()
         wb = openpyxl.load_workbook(io.BytesIO(content))
         ws = wb.active
-        # 尝试在所有单元格中查找并替换模板占位符
-        field_keys = list(data.keys())
-        replacements = {}
-        for key in field_keys:
-            val = data[key] or ''
-            replacements[key.lower()] = val
-            replacements[key] = val
+        # 构建中英文标签替换映射
+        label_replacements = {}
+        label_map = {
+            'policyNo': data.get('policyNo', ''), '保单号': data.get('policyNo', ''),
+            'insured': data.get('insured', ''), '投保人': data.get('insured', ''),
+            'insuredPerson': data.get('insuredPerson', ''), '被保险人': data.get('insuredPerson', ''),
+            'insuranceType': data.get('insuranceType', ''), '险种': data.get('insuranceType', ''),
+            'accidentDate': data.get('accidentDate', ''), '出险时间': data.get('accidentDate', ''),
+            'accidentLocation': data.get('accidentLocation', ''), '出险地点': data.get('accidentLocation', ''),
+            'claimAmount': data.get('claimAmount', ''), '索赔金额': data.get('claimAmount', ''),
+            'suggestion': data.get('suggestion', ''), '赔付建议': data.get('suggestion', ''),
+            'acceptDate': data.get('acceptDate', ''), '受案时间': data.get('acceptDate', ''),
+            'closeDate': data.get('closeDate', ''), '结案时间': data.get('closeDate', ''),
+            'investigator': data.get('investigator', ''), '调查员': data.get('investigator', ''),
+        }
+        for label_key, label_value in label_map.items():
+            if label_value:
+                label_replacements[label_key] = label_value
+        # 尝试在所有单元格中查找并替换
+        modified_count = 0
         for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column):
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
-                    orig = cell.value
-                    for k, v in replacements.items():
-                        if k in orig:
-                            orig = orig.replace(k, v)
-                    # 也尝试替换常见中文标签
-                    label_map = {
-                        'policyNo': None, '保险单号': data.get('policyNo', ''),
-                        'insured': None, '投保人': data.get('insured', ''),
-                        'insuranceType': None, '险种': data.get('insuranceType', ''),
-                        'accidentDate': None, '出险时间': data.get('accidentDate', ''),
-                        'accidentLocation': None, '出险地点': data.get('accidentLocation', ''),
-                        'claimAmount': None, '索赔金额': data.get('claimAmount', ''),
-                        'suggestion': None, '赔付建议': data.get('suggestion', ''),
-                        'acceptDate': None, '受案时间': data.get('acceptDate', ''),
-                        'closeDate': None, '结案时间': data.get('closeDate', ''),
-                        'investigator': None, '调查员': data.get('investigator', ''),
-                    }
-                    if orig != cell.value:
-                        cell.value = orig
+                    orig = str(cell.value)
+                    new_val = orig
+                    for search_key, replace_val in label_replacements.items():
+                        if search_key in new_val:
+                            new_val = new_val.replace(search_key, str(replace_val))
+                    if new_val != orig:
+                        cell.value = new_val
+                        modified_count += 1
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
