@@ -191,16 +191,11 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
                 break
         
         if not matched:
-            tpl_content_paras = tpl_chapter_content.get(ch_title, [])
-            if tpl_content_paras:
-                for pe in tpl_content_paras:
-                    new_body.append(pe)
-            else:
-                empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
-                empty_r = etree.SubElement(empty_p, f'{{{nsp["w"]}}}r')
-                empty_t = etree.SubElement(empty_r, f'{{{nsp["w"]}}}t')
-                empty_t.text = '（此章节内容待补充）'
-                empty_t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+            # 只保留章节标题，不输出模板自带的示范内容
+            empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
+            empty_r = etree.SubElement(empty_p, f'{{{nsp["w"]}}}r')
+            empty_t = etree.SubElement(empty_r, f'{{{nsp["w"]}}}t')
+            empty_t.text = ''
     
     # 添加上传文档中额外的章节
     if source_body is not None and all_source_paras:

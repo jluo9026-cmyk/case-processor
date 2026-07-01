@@ -1165,6 +1165,24 @@ async def run_report_with_preset(request: Request):
                 if placeholder in report_content:
                     report_content = report_content.replace(placeholder, default_value)
             report_content = re.sub(r'\{\{[^}]+\}\}', '待核实', report_content)
+            # 清理模板内容：只保留章节标题行和报告标题行，去掉模板自带的固定描述文字
+            cleaned_lines = []
+            for line in report_content.split('\n'):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                # 保留报告标题（不含章节标记的正文第一行）
+                # 保留章节标题行（以"一、"到"九、"开头，或以"（一）"到"（九）"开头）
+                # 保留包含"待核实"、"待填写"等替换内容的行（即占位符被替换后的行）
+                is_chapter_heading = re.match(r'^[一二三四五六七八九十]+[、．\.]', stripped) or re.match(r'^（[一二三四五六七八九十]+）', stripped)
+                is_placeholder_line = '待核实' in stripped or '待填写' in stripped or '保险公司' in stripped or '深圳市恒泰诚' in stripped
+                if is_chapter_heading or is_placeholder_line:
+                    cleaned_lines.append(line)
+                # 报告标题（第一行）也保留
+                elif len(cleaned_lines) == 0 and not is_chapter_heading:
+                    cleaned_lines.append(line)
+            if cleaned_lines:
+                report_content = '\n'.join(cleaned_lines)
             return {
                 'success': True,
                 'report_content': report_content,
