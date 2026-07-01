@@ -37,9 +37,13 @@ body{font-family:"Microsoft YaHei",sans-serif;background:linear-gradient(135deg,
 .i:hover{transform:translateY(-4px);border-color:#667eea}
 .ic{font-size:42px;margin-bottom:12px}.nm{font-size:18px;font-weight:600;color:#1a1a2e;margin-bottom:6px}.de{font-size:13px;color:#888}
 .b{background:#fff;border-radius:12px;padding:14px;margin-top:20px;text-align:center;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.08)}
-.f{text-align:center;color:rgba(255,255,255,.7);margin-top:24px;font-size:12px}
+.f{text-align:center;color:rgba(255,255,255,.7);margin-top:24px;font-size:12px}.t{padding:6px 16px;border-radius:20px;background:rgba(255,255,255,.95);display:inline-block;margin-top:8px;font-size:13px;color:#333;box-shadow:0 2px 8px rgba(0,0,0,.1)}
 </style></head><body><div class="c">
-<div class="h"><h1>📋 案件处理启动器</h1><p>集成多个案件处理工具</p></div>
+<div class="h">
+<span id="authInfo" style="display:none;float:right;font-size:12px;color:#888;cursor:pointer" onclick="logout()">退出</span>
+<h1>📋 案件处理启动器</h1>
+<p id="statusText">集成多个案件处理工具</p>
+</div>
 <div class="g">
 <div class="i" onclick="window.open('/report-standard')"><div class="ic">📄</div><div class="nm">报告标准化</div><div class="de">DOCX格式转换+预设模板</div></div>
 <div class="i" onclick="window.open('/tools/report_generate/index.html')"><div class="ic">📋</div><div class="nm">报告生成</div><div class="de">AI生成勘查报告</div></div>
@@ -49,10 +53,47 @@ body{font-family:"Microsoft YaHei",sans-serif;background:linear-gradient(135deg,
 </div>
 <div class="b">✅ 共 5 个工具</div>
 <div class="f"></div>
-</div></body></html>"""
+</div>
+<script>
+function getToken(){return localStorage.getItem('auth_token')}
+function getUser(){try{return JSON.parse(localStorage.getItem('auth_user'))}catch(e){return null}}
+(async function(){
+  var token=getToken();
+  if(!token){window.location.href='/login';return}
+  try{
+    var r=await fetch('/api/auth/verify?token='+encodeURIComponent(token));
+    var d=await r.json();
+    if(d.success){
+      var u=d.user;
+      document.getElementById('statusText').textContent='欢迎，'+u.display_name;
+      document.getElementById('authInfo').style.display='block';
+      document.getElementById('authInfo').textContent='退出 ('+u.display_name+')';
+    }else{
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_user');
+      window.location.href='/login';
+    }
+  }catch(e){}
+})();
+function logout(){
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+  window.location.href='/login';
+}
+</script>
+</body></html>"""
+
+@app.get('/login')
+async def login_page():
+    tp = BASE_DIR / 'templates' / 'login.html'
+    if tp.exists():
+        return HTMLResponse(tp.read_text(encoding='utf-8'))
+    return HTMLResponse('<h1>登录</h1>')
+
 
 @app.get('/')
 async def root():
+    # 检查是否有token参数，如果有则验证
     return HTMLResponse(HOME)
 
 @app.get('/api/health')

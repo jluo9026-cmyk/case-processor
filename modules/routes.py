@@ -929,6 +929,56 @@ async def list_standard_templates():
     return {'success': True, 'templates': templates}
 
 
+# ============ 用户认证 API ============
+@app.post('/api/auth/register')
+async def auth_register(request: Request):
+    """用户注册"""
+    try:
+        body = await request.json()
+        from modules.auth import register_user
+        username = body.get('username', '').strip()
+        password = body.get('password', '').strip()
+        company = body.get('company', 'hengtaicheng')
+        display_name = body.get('display_name', '')
+        # 验证公司是否存在
+        from modules.template_data import get_company
+        c = get_company(company)
+        company = c['id']
+        result = register_user(username, password, company, display_name)
+        return result
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+@app.post('/api/auth/login')
+async def auth_login(request: Request):
+    """用户登录"""
+    try:
+        body = await request.json()
+        from modules.auth import login_user
+        username = body.get('username', '').strip()
+        password = body.get('password', '').strip()
+        result = login_user(username, password)
+        return result
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+@app.get('/api/auth/verify')
+async def auth_verify(token: str = ''):
+    """验证token并返回用户信息"""
+    from modules.auth import verify_token, get_user_info
+    if not token:
+        return {'success': False, 'error': '缺少token'}
+    result = verify_token(token)
+    if not result['valid']:
+        return {'success': False, 'error': result.get('reason', '验证失败')}
+    user_info = get_user_info(result['username'])
+    if not user_info:
+        return {'success': False, 'error': '用户不存在'}
+    return {'success': True, 'user': user_info}
+
+
 # ============ 多公司支持 API ============
 @app.get('/api/companies')
 async def list_companies():
