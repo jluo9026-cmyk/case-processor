@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - 案件处理启动器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: "Microsoft YaHei", sans-serif; background: #f0f2f5; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .header { background: #fff; border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.08); display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 20px; color: #1a1a2e; }
+        .header .right { font-size: 13px; color: #888; }
+        .header .right a { color: #667eea; text-decoration: none; cursor: pointer; }
+        .header .right a:hover { text-decoration: underline; }
+        .card { background: #fff; border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+        .card h2 { font-size: 16px; color: #333; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+        .stat-card { background: #f8fafc; border-radius: 10px; padding: 16px; text-align: center; border: 1px solid #e8eaed; }
+        .stat-card .num { font-size: 28px; font-weight: 700; color: #667eea; }
+        .stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
+        th { background: #f8fafc; font-weight: 600; color: #555; }
+        td { color: #333; }
+        tr:hover { background: #f8fafc; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+        .badge-admin { background: #ede7f6; color: #5e35b1; }
+        .badge-user { background: #e3f2fd; color: #1565c0; }
+        .badge-company { background: #e8f5e9; color: #2e7d32; }
+        select, input[type=text], input[type=password] { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
+        select:focus, input:focus { outline: none; border-color: #667eea; }
+        .btn { padding: 6px 14px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; transition: .2s; }
+        .btn-sm { padding: 4px 10px; font-size: 11px; }
+        .btn-primary { background: #667eea; color: #fff; }
+        .btn-primary:hover { background: #5a6fd6; }
+        .btn-danger { background: #ef5350; color: #fff; }
+        .btn-danger:hover { background: #e53935; }
+        .btn-outline { background: #f5f5f5; color: #333; border: 1px solid #ddd; }
+        .btn-outline:hover { background: #eee; }
+        .btn-success { background: #43a047; color: #fff; }
+        .btn-success:hover { background: #388e3c; }
+        .action-group { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+        .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); }
+        .modal { background: #fff; border-radius: 12px; padding: 24px; max-width: 400px; margin: 100px auto; box-shadow: 0 4px 20px rgba(0,0,0,.2); }
+        .modal h3 { margin-bottom: 16px; }
+        .modal .form-group { margin-bottom: 12px; }
+        .modal .form-group label { display: block; font-size: 13px; margin-bottom: 4px; color: #555; }
+        .modal .form-group input, .modal .form-group select { width: 100%; }
+        .modal .btn-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+        .loading { text-align: center; padding: 40px; color: #888; }
+        .toast { position: fixed; top: 20px; right: 20px; background: #333; color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 13px; z-index: 2000; display: none; }
+        .toast.success { background: #43a047; }
+        .toast.error { background: #ef5350; }
+        @media (max-width: 600px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚙️ 管理后台</h1>
+            <div class="right">
+                <span id="adminInfo"></span>
+                <a onclick="window.open('/')">返回首页</a>
+            </div>
+        </div>
+
+        <!-- 统计数据 -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card"><div class="num" id="statUsers">-</div><div class="label">用户总数</div></div>
+            <div class="stat-card"><div class="num" id="statAdmins">-</div><div class="label">管理员</div></div>
+            <div class="stat-card"><div class="num" id="statUploads">-</div><div class="label">上传文件</div></div>
+            <div class="stat-card"><div class="num" id="statOutputs">-</div><div class="label">生成报告</div></div>
+        </div>
+
+        <!-- 用户管理 -->
+        <div class="card">
+            <h2>👥 用户管理 <span id="userCount" style="font-size:13px;color:#888;font-weight:400;"></span></h2>
+            <div id="loadingUsers" class="loading">加载中...</div>
+            <div id="userTable" style="display:none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>用户名</th>
+                            <th>显示名称</th>
+                            <th>所属公司</th>
+                            <th>角色</th>
+                            <th>注册时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userList"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改公司弹窗 -->
+    <div id="modalCompany" class="modal-overlay">
+        <div class="modal">
+            <h3>修改所属公司</h3>
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="editUsername" readonly>
+            </div>
+            <div class="form-group">
+                <label>目标公司</label>
+                <select id="editCompany"></select>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-outline" onclick="closeModal('modalCompany')">取消</button>
+                <button class="btn btn-primary" onclick="saveCompany()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重置密码弹窗 -->
+    <div id="modalPassword" class="modal-overlay">
+        <div class="modal">
+            <h3>重置密码</h3>
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="pwUsername" readonly>
+            </div>
+            <div class="form-group">
+                <label>新密码</label>
+                <input type="password" id="pwNewPassword" placeholder="至少4个字符">
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-outline" onclick="closeModal('modalPassword')">取消</button>
+                <button class="btn btn-primary" onclick="savePassword()">确认重置</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        let adminToken = '';
+        let adminUser = null;
+
+        function getToken() { return localStorage.getItem('auth_token'); }
+
+        function showToast(msg, type) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast ' + type;
+            t.style.display = 'block';
+            setTimeout(() => t.style.display = 'none', 3000);
+        }
+
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+        function openModal(id) { document.getElementById(id).style.display = 'block'; }
+
+        async function loadStats() {
+            try {
+                const r = await fetch('/api/admin/stats?token=' + encodeURIComponent(adminToken));
+                const d = await r.json();
+                if (d.success) {
+                    document.getElementById('statUsers').textContent = d.stats.total_users;
+                    document.getElementById('statAdmins').textContent = d.stats.admin_count;
+                    document.getElementById('statUploads').textContent = d.stats.upload_files_count;
+                    document.getElementById('statOutputs').textContent = d.stats.output_files_count;
+                }
+            } catch(e) {}
+        }
+
+        async function loadUsers() {
+            document.getElementById('loadingUsers').style.display = 'block';
+            document.getElementById('userTable').style.display = 'none';
+            try {
+                const r = await fetch('/api/admin/users?token=' + encodeURIComponent(adminToken));
+                const d = await r.json();
+                if (d.success) {
+                    document.getElementById('userCount').textContent = '（共 ' + d.total + ' 人）';
+                    const tbody = document.getElementById('userList');
+                    tbody.innerHTML = '';
+                    d.users.forEach(u => {
+                        const tr = document.createElement('tr');
+                        const roleBadge = u.role === 'admin' ? '<span class="badge badge-admin">管理员</span>' : '<span class="badge badge-user">用户</span>';
+                        const companyBadge = '<span class="badge badge-company">' + escapeHtml(u.company_name) + '</span>';
+                        tr.innerHTML = `
+                            <td><strong>${escapeHtml(u.username)}</strong></td>
+                            <td>${escapeHtml(u.display_name)}</td>
+                            <td>${companyBadge}</td>
+                            <td>${roleBadge}</td>
+                            <td>${u.created_at || '-'}</td>
+                            <td>
+                                <div class="action-group">
+                                    <button class="btn btn-primary btn-sm" onclick="editCompany('${escapeHtml(u.username)}','${escapeHtml(u.company)}')">调公司</button>
+                                    <button class="btn btn-outline btn-sm" onclick="resetPw('${escapeHtml(u.username)}')">重置密码</button>
+                                    ${u.role !== 'admin' ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${escapeHtml(u.username)}')">删除</button>` : ''}
+                                </div>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                    document.getElementById('loadingUsers').style.display = 'none';
+                    document.getElementById('userTable').style.display = 'block';
+                } else {
+                    showToast(d.error || '加载失败', 'error');
+                }
+            } catch(e) {
+                showToast('网络错误', 'error');
+            }
+        }
+
+        async function loadCompanies() {
+            try {
+                const r = await fetch('/api/companies');
+                const d = await r.json();
+                if (d.success) {
+                    const sel = document.getElementById('editCompany');
+                    sel.innerHTML = '';
+                    d.companies.forEach(c => {
+                        const opt = document.createElement('option');
+                        opt.value = c.id;
+                        opt.textContent = c.name + ' (' + c.display_name + ')';
+                        sel.appendChild(opt);
+                    });
+                }
+            } catch(e) {}
+        }
+
+        let editingUsername = '';
+
+        function editCompany(username, currentCompany) {
+            editingUsername = username;
+            document.getElementById('editUsername').value = username;
+            document.getElementById('editCompany').value = currentCompany;
+            openModal('modalCompany');
+        }
+
+        async function saveCompany() {
+            const newCompany = document.getElementById('editCompany').value;
+            try {
+                const r = await fetch('/api/admin/user/update-company', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: adminToken, username: editingUsername, company: newCompany })
+                });
+                const d = await r.json();
+                if (d.success) {
+                    showToast('✅ 已更新 ' + editingUsername + ' 的公司', 'success');
+                    closeModal('modalCompany');
+                    loadUsers();
+                } else {
+                    showToast(d.error || '失败', 'error');
+                }
+            } catch(e) {
+                showToast('网络错误', 'error');
+            }
+        }
+
+        function resetPw(username) {
+            document.getElementById('pwUsername').value = username;
+            document.getElementById('pwNewPassword').value = '';
+            openModal('modalPassword');
+        }
+
+        async function savePassword() {
+            const username = document.getElementById('pwUsername').value;
+            const password = document.getElementById('pwNewPassword').value;
+            if (!password || password.length < 4) { showToast('密码至少4个字符', 'error'); return; }
+            try {
+                const r = await fetch('/api/admin/user/reset-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: adminToken, username: username, password: password })
+                });
+                const d = await r.json();
+                if (d.success) {
+                    showToast('✅ 密码已重置', 'success');
+                    closeModal('modalPassword');
+                } else {
+                    showToast(d.error || '失败', 'error');
+                }
+            } catch(e) {
+                showToast('网络错误', 'error');
+            }
+        }
+
+        function deleteUser(username) {
+            if (!confirm('确定要删除用户 "' + username + '" 吗？此操作不可恢复！')) return;
+            fetch('/api/admin/user/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: adminToken, username: username })
+            }).then(r => r.json()).then(d => {
+                if (d.success) {
+                    showToast('✅ 已删除 ' + username, 'success');
+                    loadUsers();
+                } else {
+                    showToast(d.error || '失败', 'error');
+                }
+            }).catch(e => showToast('网络错误', 'error'));
+        }
+
+        function escapeHtml(s) {
+            if (!s) return '';
+            return s.replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"').replace(/'/g,'&#39;');
+        }
+
+        async function init() {
+            const token = getToken();
+            if (!token) { window.location.href = '/login'; return; }
+            adminToken = token;
+
+            try {
+                const r = await fetch('/api/auth/verify?token=' + encodeURIComponent(token));
+                const d = await r.json();
+                if (d.success && d.user.role === 'admin') {
+                    adminUser = d.user;
+                    document.getElementById('adminInfo').textContent = '👤 ' + d.user.display_name + ' | ';
+                    loadStats();
+                    loadCompanies();
+                    loadUsers();
+                } else {
+                    showToast('需要管理员权限', 'error');
+                    setTimeout(() => window.location.href = '/', 2000);
+                }
+            } catch(e) {
+                showToast('验证失败', 'error');
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

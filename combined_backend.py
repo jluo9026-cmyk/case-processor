@@ -87,6 +87,14 @@ function logout(){
 </script>
 </body></html>"""
 
+@app.get('/admin')
+async def admin_page():
+    tp = BASE_DIR / 'templates' / 'admin.html'
+    if tp.exists():
+        return HTMLResponse(tp.read_text(encoding='utf-8'))
+    return HTMLResponse('<h1>管理后台</h1>')
+
+
 @app.get('/login')
 async def login_page():
     tp = BASE_DIR / 'templates' / 'login.html'
