@@ -1483,25 +1483,29 @@ async def process_docx(request: Request):
 
 
 def replace_table_with_attachments(table, attachments):
-    """替换附件清单：保留第1行表头和所有序号列，从第2行开始在第2列填入附件名称"""
+    """替换附件清单：保留表头，在第2列填入名称，未替换的多余行全部删除"""
+    rows_to_delete = []
     for row_idx, row in enumerate(table.rows):
         cells = row.cells
         # 第0行（表头行）无条件跳过，绝不动
         if row_idx == 0:
             continue
-        # 如果少于2列（无第2列），也跳过
-        if len(cells) < 2:
-            continue
-        # 超出附件数量则跳过
         data_index = row_idx - 1
-        if data_index >= len(attachments):
-            continue
-        # 清空第2列原内容，填入附件名称
-        cell = cells[1]
-        cell.text = ''
-        p = cell.paragraphs[0]
-        run = p.add_run(attachments[data_index]['name'])
-        run.font.size = Pt(10.5)
+        if data_index < len(attachments):
+            # 有对应附件数据 -> 填入名称
+            if len(cells) >= 2:
+                cell = cells[1]
+                cell.text = ''
+                p = cell.paragraphs[0]
+                run = p.add_run(attachments[data_index]['name'])
+                run.font.size = Pt(10.5)
+        else:
+            # 超出附件数量 -> 标记为待删除
+            rows_to_delete.append(row)
+    # 从表格中移除多余行（从后往前删避免索引错乱）
+    for row in reversed(rows_to_delete):
+        tbl = row._tr.getparent()
+        tbl.remove(row._tr)
 
 
 # ============ 报告生成 /api/run (report_generate.js 调用) ============
