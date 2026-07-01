@@ -73,6 +73,27 @@
             <div class="stat-card"><div class="num" id="statOutputs">-</div><div class="label">生成报告</div></div>
         </div>
 
+        <!-- 在线会话 -->
+        <div class="card">
+            <h2>🟢 在线会话 <span id="sessionCount" style="font-size:13px;color:#888;font-weight:400;"></span></h2>
+            <div id="loadingSessions" class="loading">加载中...</div>
+            <div id="sessionTable" style="display:none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>用户名</th>
+                            <th>公司</th>
+                            <th>请求次数</th>
+                            <th>最后活动</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessionList"></tbody>
+                </table>
+            </div>
+            <div id="noSessions" style="display:none;padding:20px;text-align:center;color:#888;font-size:13px;">暂无活跃会话</div>
+        </div>
+
         <!-- 用户管理 -->
         <div class="card">
             <h2>👥 用户管理 <span id="userCount" style="font-size:13px;color:#888;font-weight:400;"></span></h2>
@@ -152,6 +173,55 @@
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
         function openModal(id) { document.getElementById(id).style.display = 'block'; }
+
+        async function loadSessions() {
+            const tbody = document.getElementById('sessionList');
+            const noDiv = document.getElementById('noSessions');
+            document.getElementById('loadingSessions').style.display = 'block';
+            document.getElementById('sessionTable').style.display = 'none';
+            noDiv.style.display = 'none';
+            try {
+                const r = await fetch('/api/admin/sessions?token=' + encodeURIComponent(adminToken));
+                const d = await r.json();
+                if (d.success) {
+                    document.getElementById('sessionCount').textContent = '（' + d.online_count + '人在线，总请求' + d.total_requests + '次）';
+                    tbody.innerHTML = '';
+                    if (d.sessions.length === 0) {
+                        noDiv.style.display = 'block';
+                    } else {
+                        d.sessions.forEach(s => {
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td><strong>${escapeHtml(s.username)}</strong></td>
+                                <td><span class="badge badge-company">${escapeHtml(s.company)}</span></td>
+                                <td>${s.request_count}</td>
+                                <td>${s.last_active}</td>
+                                <td><button class="btn btn-danger btn-sm" onclick="kickUser('${escapeHtml(s.username)}')">强制下线</button></td>
+                            `;
+                            tbody.appendChild(tr);
+                        });
+                        document.getElementById('sessionTable').style.display = 'block';
+                    }
+                    document.getElementById('loadingSessions').style.display = 'none';
+                }
+            } catch(e) {}
+        }
+
+        function kickUser(username) {
+            if (!confirm('确定要强制 ' + username + ' 下线吗？')) return;
+            fetch('/api/admin/kick-user', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: adminToken, username: username })
+            }).then(r => r.json()).then(d => {
+                if (d.success) {
+                    showToast('✅ ' + username + ' 已下线（' + d.kicked_sessions + '个会话）', 'success');
+                    loadSessions();
+                } else {
+                    showToast(d.error || '失败', 'error');
+                }
+            }).catch(e => showToast('网络错误', 'error'));
+        }
 
         async function loadStats() {
             try {
@@ -314,8 +384,11 @@
                     adminUser = d.user;
                     document.getElementById('adminInfo').textContent = '👤 ' + d.user.display_name + ' | ';
                     loadStats();
+                    loadSessions();
                     loadCompanies();
                     loadUsers();
+                    // 每30秒刷新一次在线会话
+                    setInterval(loadSessions, 30000);
                 } else {
                     showToast('需要管理员权限', 'error');
                     setTimeout(() => window.location.href = '/', 2000);
