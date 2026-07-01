@@ -41,8 +41,19 @@ def _chapter_matches(title_a: str, title_b: str) -> bool:
     return a == b or a in b or b in a
 
 
+def _chapter_number(title):
+    """提取章节的编号数字，如 '三、xxx' → 3"""
+    cn_map = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10}
+    m = re.match(r'^([一二三四五六七八九十]+)[、．\.]', title)
+    if m:
+        num_str = m.group(1)
+        if num_str in cn_map:
+            return cn_map[num_str]
+    return None
+
+
 def _merge_content_into_template(template_doc: Document, source_bytes: bytes, output_path: Path):
-    """将上传文档的内容按章节合并到模板文档中"""
+    """将上传文档的内容按章节编号一一对应合并到模板中"""
     import zipfile
     import io as _io
     from lxml import etree
@@ -67,171 +78,150 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         source_files[item.filename] = source_zip.read(item.filename)
     source_zip.close()
     
-    # ========== 第三步：解析模板章节结构 ==========
+    # ========== 第三步：解析模板 ==========
     tpl_doc_xml_content = template_files.get('word/document.xml')
     if tpl_doc_xml_content is None:
         raise ValueError("模板文件中缺少 word/document.xml")
-    
     tpl_doc_xml = etree.fromstring(tpl_doc_xml_content)
     body = tpl_doc_xml.find('.//w:body', nsp)
     all_tpl_paras = body.findall('w:p', nsp) if body is not None else []
     
-    tpl_chapter_indices = []
-    for idx, para_elem in enumerate(all_tpl_paras):
-        texts = para_elem.findall('.//w:t', nsp)
-        para_text = ''.join(t.text or '' for t in texts).strip()
-        if _is_chapter_heading(para_text):
-            tpl_chapter_indices.append({'index': idx, 'title': para_text})
+    # 模板：章节编号→{标题, 段落索引列表}
+    tpl_chapters = []  # [(number, title_para_index, content_para_indices)]
+    tpl_pre_paras_indices = []
+    tpl_post_paras_indices = []
+    current_num = None
+    current_title_idx = None
+    current_content = []
+    found_any = False
     
-    # ========== 第四步：解析上传文档章节结构 ==========
+    for idx, pe in enumerate(all_tpl_paras):
+        texts = pe.findall('.//w:t', nsp)
+        para_text = ''.join(t.text or '' for t in texts).strip()
+        num = _chapter_number(para_text)
+        if num is not None:
+            if current_num is not None:
+                tpl_chapters.append((current_num, current_title_idx, current_content))
+            current_num = num
+            current_title_idx = idx
+            current_content = []
+            found_any = True
+        else:
+            if not found_any:
+                tpl_pre_paras_indices.append(idx)
+            else:
+                current_content.append(idx)
+    if current_num is not None:
+        tpl_chapters.append((current_num, current_title_idx, current_content))
+    # 收集后置内容：最后一个章节标题之后的所有段落作为后置（声明/签名等）
+    if found_any and tpl_chapters:
+        last_num, last_title_idx, last_content = tpl_chapters[-1]
+        # 将最后一个章节的内容剥离出来作为后置
+        # (模板的最后一章通常包含"声明""以上报告仅供参考"等非章节编号的固定内容)
+        tpl_post_paras_indices = last_content
+        # 最后一个章节的内容置空，只保留标题
+        tpl_chapters[-1] = (last_num, last_title_idx, [])
+    
+    # ========== 第四步：解析上传文档 ==========
     source_doc_xml_content = source_files.get('word/document.xml')
     if source_doc_xml_content is None:
         raise ValueError("上传文档中缺少 word/document.xml")
-    
     source_doc_xml = etree.fromstring(source_doc_xml_content)
     source_body = source_doc_xml.find('.//w:body', nsp)
     
-    source_chapters = []  # (title, heading_index, content_indices)
-    source_pre_chapter_indices = []  # 第一个章节标题之前的段落索引
-    current_title = None
-    current_heading_idx = None
-    current_indices = []
-    all_source_paras = []  # ✅ 修复4：提前定义，避免 UnboundLocalError
-    first_heading_found = False
+    source_chapters = []  # [(number, content_para_indices)]
+    source_pre_indices = []
+    all_source_paras = []
+    s_current_num = None
+    s_content = []
+    s_found = False
     
     if source_body is not None:
         all_source_paras = source_body.findall('w:p', nsp)
-        for idx, para_elem in enumerate(all_source_paras):
-            texts = para_elem.findall('.//w:t', nsp)
+        for idx, pe in enumerate(all_source_paras):
+            texts = pe.findall('.//w:t', nsp)
             para_text = ''.join(t.text or '' for t in texts).strip()
-            if _is_chapter_heading(para_text):
-                if current_title is not None:
-                    source_chapters.append((current_title, current_heading_idx, current_indices))
-                current_title = para_text
-                current_heading_idx = idx
-                current_indices = []
-                first_heading_found = True
+            num = _chapter_number(para_text)
+            if num is not None:
+                if s_current_num is not None:
+                    source_chapters.append((s_current_num, s_content))
+                s_current_num = num
+                s_content = []
+                s_found = True
             else:
-                if not first_heading_found:
-                    source_pre_chapter_indices.append(idx)
+                if not s_found:
+                    source_pre_indices.append(idx)
                 else:
-                    current_indices.append(idx)
-        if current_title is not None:
-            source_chapters.append((current_title, current_heading_idx, current_indices))
+                    s_content.append(idx)
+        if s_current_num is not None:
+            source_chapters.append((s_current_num, s_content))
     
     chapters_found = len(source_chapters)
+    
+    # 建立源文档的 编号→内容索引列表 映射
+    source_by_num = {}
+    for snum, s_indices in source_chapters:
+        source_by_num[snum] = s_indices
     
     # ========== 第五步：构建新文档 ==========
     new_doc_xml = deepcopy(tpl_doc_xml)
     new_body = new_doc_xml.find('.//w:body', nsp)
-    
     if new_body is None:
         raise ValueError("模板文档中找不到 body 元素")
-    
     tpl_sectPr = new_body.find('w:sectPr', nsp)
     
-    # 保存模板章节间内容
-    tpl_chapter_para_indices = {ch['index'] for ch in tpl_chapter_indices}
-    tpl_pre_chapter_paras = []
-    tpl_post_chapter_paras = []
-    tpl_chapter_content = {}
-    
-    if tpl_chapter_indices:
-        first_ch_idx = tpl_chapter_indices[0]['index']
-        last_ch_idx = tpl_chapter_indices[-1]['index']
-        
-        current_ch_title = None
-        current_ch_content = []
-        for idx, pe in enumerate(all_tpl_paras):
-            if idx in tpl_chapter_para_indices:
-                if current_ch_title is not None:
-                    tpl_chapter_content[current_ch_title] = current_ch_content
-                texts = pe.findall('.//w:t', nsp)
-                current_ch_title = ''.join(t.text or '' for t in texts).strip()
-                current_ch_content = []
-            elif idx < first_ch_idx:
-                tpl_pre_chapter_paras.append(deepcopy(pe))
-            elif idx > last_ch_idx:
-                tpl_post_chapter_paras.append(deepcopy(pe))
-            else:
-                current_ch_content.append(deepcopy(pe))
-        if current_ch_title is not None:
-            tpl_chapter_content[current_ch_title] = current_ch_content
-    else:
-        for idx, pe in enumerate(all_tpl_paras):
-            if idx not in tpl_chapter_para_indices:
-                tpl_pre_chapter_paras.append(deepcopy(pe))
-    
     # 清空 body
-    children_to_remove = []
-    for child in new_body:
+    for child in list(new_body):
         if child.tag != f'{{{nsp["w"]}}}sectPr':
-            children_to_remove.append(child)
-    for child in children_to_remove:
-        new_body.remove(child)
+            new_body.remove(child)
     
-    # 重新构建
-    matched_source_titles = set()
-    
-    # ====== 1. 前导内容（标题+引言）：使用上传文档的内容替换模板的 ======
-    if source_pre_chapter_indices:
-        for pi in source_pre_chapter_indices:
+    # ====== 1. 前导内容（标题+引言） ======
+    if source_pre_indices:
+        for pi in source_pre_indices:
             if pi < len(all_source_paras):
                 new_body.append(deepcopy(all_source_paras[pi]))
     else:
-        # 如果上传文档没有前导内容，使用模板原有的
-        for pe in tpl_pre_chapter_paras:
-            new_body.append(pe)
+        for pi in tpl_pre_paras_indices:
+            if pi < len(all_tpl_paras):
+                new_body.append(deepcopy(all_tpl_paras[pi]))
     
-    # ====== 2. 章节内容 ======
-    for ch_info in tpl_chapter_indices:
-        ch_title = ch_info['title']
-        ch_para_index = ch_info['index']
-        
-        matched = False
-        for src_title, src_heading_idx, src_indices in source_chapters:
-            if _chapter_matches(src_title, ch_title):
-                matched = True
-                matched_source_titles.add(src_title)
-                # 章节标题相同→用上传的章节标题替换模板的标题
-                if src_heading_idx is not None and src_heading_idx < len(all_source_paras):
-                    new_body.append(deepcopy(all_source_paras[src_heading_idx]))
-                for pi in src_indices:
-                    if pi < len(all_source_paras):
-                        new_body.append(deepcopy(all_source_paras[pi]))
-                break
-        
-        if not matched:
-            # 保留模板的章节标题（不上传文档中），内容为空
-            if ch_para_index < len(all_tpl_paras):
-                new_body.append(deepcopy(all_tpl_paras[ch_para_index]))
+    # ====== 2. 按编号对应填充章节 ======
+    used_source_nums = set()
+    for tpl_num, tpl_title_idx, tpl_content_indices in tpl_chapters:
+        # 输出模板标题（保留模板格式）
+        if tpl_title_idx < len(all_tpl_paras):
+            new_body.append(deepcopy(all_tpl_paras[tpl_title_idx]))
+        # 查找同编号的源文档内容
+        if tpl_num in source_by_num:
+            used_source_nums.add(tpl_num)
+            for si in source_by_num[tpl_num]:
+                if si < len(all_source_paras):
+                    new_body.append(deepcopy(all_source_paras[si]))
+        else:
+            # 源文档没有此编号 → 空段落
             empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
             empty_r = etree.SubElement(empty_p, f'{{{nsp["w"]}}}r')
             empty_t = etree.SubElement(empty_r, f'{{{nsp["w"]}}}t')
             empty_t.text = ''
     
-    # ====== 3. 上传文档中额外的章节（模板没有的） ======
-    if source_body is not None and all_source_paras:
-        for src_title, src_heading_idx, src_indices in source_chapters:
-            if src_title not in matched_source_titles:
-                # 添加上传文档的章节标题及其内容
-                if src_heading_idx is not None and src_heading_idx < len(all_source_paras):
-                    new_body.append(deepcopy(all_source_paras[src_heading_idx]))
-                for pi in src_indices:
-                    if pi < len(all_source_paras):
-                        new_body.append(deepcopy(all_source_paras[pi]))
+    # ====== 3. 源文档额外的章节（模板没有对应编号的） ======
+    for snum, s_indices in source_chapters:
+        if snum not in used_source_nums:
+            for si in s_indices:
+                if si < len(all_source_paras):
+                    new_body.append(deepcopy(all_source_paras[si]))
     
-    # ====== 4. 后置内容 ======
-    for pe in tpl_post_chapter_paras:
-        new_body.append(pe)
+    # ====== 4. 后置内容（声明等） ======
+    for pi in tpl_post_paras_indices:
+        if pi < len(all_tpl_paras):
+            new_body.append(deepcopy(all_tpl_paras[pi]))
     
     # 恢复页面设置
     if tpl_sectPr is not None:
         new_body.append(deepcopy(tpl_sectPr))
     
-    # ========== 第六步：构建输出文档 ==========
+    # ========== 第六步：输出 ==========
     output_buffer = _io.BytesIO()
-    
     with zipfile.ZipFile(output_buffer, 'w', zipfile.ZIP_DEFLATED) as oz:
         for name, data in template_files.items():
             if name == 'word/document.xml':
