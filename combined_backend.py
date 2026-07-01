@@ -41,6 +41,7 @@ body{font-family:"Microsoft YaHei",sans-serif;background:linear-gradient(135deg,
 </style></head><body><div class="c">
 <div class="h">
 <span id="authInfo" style="display:none;float:right;font-size:12px;color:#888;cursor:pointer" onclick="logout()">退出</span>
+<span id="adminLink" style="display:none;float:right;font-size:12px;color:#667eea;cursor:pointer;margin-right:12px;" onclick="window.open('/admin')">⚙️ 管理</span>
 <h1>📋 案件处理启动器</h1>
 <p id="statusText">集成多个案件处理工具</p>
 </div>
@@ -68,6 +69,9 @@ function getUser(){try{return JSON.parse(localStorage.getItem('auth_user'))}catc
       document.getElementById('statusText').textContent='欢迎，'+u.display_name;
       document.getElementById('authInfo').style.display='block';
       document.getElementById('authInfo').textContent='退出 ('+u.display_name+')';
+      if(u.role==='admin'){
+        document.getElementById('adminLink').style.display='block';
+      }
     }else{
       localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');

@@ -102,8 +102,14 @@ def verify_token(token: str) -> dict:
     }
 
 
+def _is_first_user() -> bool:
+    """检查是否是第一个用户"""
+    users = _load_users()
+    return len(users) == 0
+
+
 def register_user(username: str, password: str, company: str = 'hengtaicheng', display_name: str = '') -> dict:
-    """注册新用户"""
+    """注册新用户（第一个注册的用户自动成为管理员）"""
     users = _load_users()
     if username in users:
         return {'success': False, 'error': '用户名已存在'}
@@ -111,15 +117,16 @@ def register_user(username: str, password: str, company: str = 'hengtaicheng', d
         return {'success': False, 'error': '用户名至少2个字符'}
     if not password or len(password) < 4:
         return {'success': False, 'error': '密码至少4个字符'}
+    role = 'admin' if _is_first_user() else 'user'
     users[username] = {
         'password': _hash_password(password),
         'company': company,
         'display_name': display_name or username,
         'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-        'role': 'user'
+        'role': role
     }
     _save_users(users)
-    return {'success': True, 'username': username, 'company': company}
+    return {'success': True, 'username': username, 'company': company, 'role': role}
 
 
 def login_user(username: str, password: str) -> dict:
@@ -138,6 +145,11 @@ def login_user(username: str, password: str) -> dict:
         'company': user['company'],
         'display_name': user.get('display_name', username)
     }
+
+
+def list_all_users() -> dict:
+    """列出所有用户（供管理员API使用）"""
+    return _load_users()
 
 
 def get_user_info(username: str) -> dict:

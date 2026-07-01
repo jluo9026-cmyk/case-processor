@@ -929,6 +929,143 @@ async def list_standard_templates():
     return {'success': True, 'templates': templates}
 
 
+# ============ 管理员 API ============
+def _require_admin(token: str):
+    """验证管理员权限"""
+    from modules.auth import verify_token, get_user_info
+    if not token:
+        raise HTTPException(401, '缺少token')
+    result = verify_token(token)
+    if not result['valid']:
+        raise HTTPException(401, result.get('reason', '验证失败'))
+    user_info = get_user_info(result['username'])
+    if not user_info or user_info.get('role') != 'admin':
+        raise HTTPException(403, '需要管理员权限')
+    return user_info
+
+
+@app.get('/api/admin/users')
+async def admin_list_users(token: str = ''):
+    """管理员：列出所有用户"""
+    try:
+        _require_admin(token)
+    except HTTPException as e:
+        return {'success': False, 'error': e.detail}
+    from modules.auth import list_all_users
+    from modules.template_data import get_company
+    users = list_all_users()
+    result = []
+    for username, info in users.items():
+        company_id = info.get('company', '')
+        c = get_company(company_id)
+        result.append({
+            'username': username,
+            'display_name': info.get('display_name', username),
+            'company': company_id,
+            'company_name': c['name'],
+            'role': info.get('role', 'user'),
+            'created_at': info.get('created_at', '')
+        })
+    return {'success': True, 'users': result, 'total': len(result)}
+
+
+@app.post('/api/admin/user/update-company')
+async def admin_update_company(request: Request):
+    """管理员：修改用户所属公司"""
+    try:
+        body = await request.json()
+        token = body.get('token', '')
+        _require_admin(token)
+        username = body.get('username', '')
+        new_company = body.get('company', '')
+        from modules.auth import _load_users as _lu, _save_users as _su
+        from modules.template_data import get_company
+        get_company(new_company)  # 验证公司存在
+        users = _lu()
+        if username not in users:
+            return {'success': False, 'error': '用户不存在'}
+        users[username]['company'] = new_company
+        _su(users)
+        return {'success': True}
+    except HTTPException as e:
+        return {'success': False, 'error': e.detail}
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+@app.post('/api/admin/user/reset-password')
+async def admin_reset_password(request: Request):
+    """管理员：重置用户密码"""
+    try:
+        body = await request.json()
+        token = body.get('token', '')
+        _require_admin(token)
+        username = body.get('username', '')
+        new_password = body.get('password', '')
+        from modules.auth import _load_users as _lu, _save_users as _su, _hash_password
+        users = _lu()
+        if username not in users:
+            return {'success': False, 'error': '用户不存在'}
+        users[username]['password'] = _hash_password(new_password)
+        _su(users)
+        return {'success': True}
+    except HTTPException as e:
+        return {'success': False, 'error': e.detail}
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+@app.post('/api/admin/user/delete')
+async def admin_delete_user(request: Request):
+    """管理员：删除用户"""
+    try:
+        body = await request.json()
+        token = body.get('token', '')
+        admin_info = _require_admin(token)
+        username = body.get('username', '')
+        if username == admin_info['username']:
+            return {'success': False, 'error': '不能删除自己'}
+        from modules.auth import _load_users as _lu, _save_users as _su
+        users = _lu()
+        if username not in users:
+            return {'success': False, 'error': '用户不存在'}
+        del users[username]
+        _su(users)
+        return {'success': True}
+    except HTTPException as e:
+        return {'success': False, 'error': e.detail}
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
+@app.get('/api/admin/stats')
+async def admin_stats(token: str = ''):
+    """管理员：系统使用统计"""
+    try:
+        _require_admin(token)
+    except HTTPException as e:
+        return {'success': False, 'error': e.detail}
+    from modules.auth import _load_users as _lu
+    users = _lu()
+    # 统计上传目录和输出目录
+    from modules.config import UPLOAD_DIR, OUTPUT_DIR
+    upload_files = []
+    output_files = []
+    if UPLOAD_DIR.exists():
+        upload_files = [f.name for f in UPLOAD_DIR.iterdir() if f.is_file()]
+    if OUTPUT_DIR.exists():
+        output_files = [f.name for f in OUTPUT_DIR.iterdir() if f.is_file()]
+    return {
+        'success': True,
+        'stats': {
+            'total_users': len(users),
+            'admin_count': sum(1 for u in users.values() if u.get('role') == 'admin'),
+            'upload_files_count': len(upload_files),
+            'output_files_count': len(output_files),
+        }
+    }
+
+
 # ============ 用户认证 API ============
 @app.post('/api/auth/register')
 async def auth_register(request: Request):
