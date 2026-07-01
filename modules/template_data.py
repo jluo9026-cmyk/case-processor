@@ -1,17 +1,22 @@
-# ============ 预设模板 ============
+# ============ 多公司预设模板配置 ============
 
-def _get_preset_template(preset_id: str):
-    """获取预设模板"""
-    return PRESET_TEMPLATES.get(preset_id)
+import copy
+from pathlib import Path
 
-
-PRESET_TEMPLATES = {
-    'preset_1': {
-        'id': 'preset_1',
-        'name': '模板一：恒',
-        'type': 'preset',
-        'description': '标准保险公估调查报告格式',
-        'content': '''关于被保险人{{insured_name}}调查报告
+# ===== 公司配置 =====
+COMPANIES = {
+    'hengtaicheng': {
+        'id': 'hengtaicheng',
+        'name': '恒泰诚',
+        'display_name': '恒泰诚信息咨询',
+        'footer_text': '',
+        'presets': {
+            'preset_1': {
+                'id': 'preset_1',
+                'name': '模板一：恒',
+                'type': 'preset',
+                'description': '标准保险公估调查报告格式',
+                'content': '''关于被保险人{{insured_name}}调查报告
 
 一、案件基本情况
 1、保险单内容
@@ -72,30 +77,30 @@ PRESET_TEMPLATES = {
 {{company_name}}
 {{report_date}}
 ''',
-        'fields': [
-            'insured_name', 'insurance_company', 'policy_no', 'insurance_period',
-            'insurance_type', 'accident_time', 'case_description', 'verification_items',
-            'investigation_content', 'investigation_location_1', 'investigation_content_1',
-            'interviewee', 'interview_attachment', 'interview_content',
-            'investigation_location_2', 'location_attachment', 'investigation_content_2',
-            'investigation_location_3', 'contact_person', 'contact_attachment', 'investigation_content_3',
-            'investigation_location_4', 'police_attachment', 'police_investigation_content',
-            'investigation_location_5', 'medical_materials', 'medical_attachment', 'medical_investigation_content',
-            'insurance_check_attachment', 'insurance_check_content',
-            'reporter', 'attachment_1', 'attachment_2', 'attachment_3', 'attachment_4',
-            'attachment_5', 'attachment_6', 'attachment_7', 'attachment_8', 'attachment_9',
-            'attachment_10', 'additional_document',
-            'summary_conclusion',
-            'conclusion_1', 'conclusion_2', 'conclusion_3', 'conclusion_4',
-            'investigator', 'reviewer', 'company_name', 'report_date'
-        ]
-    },
-    'preset_2': {
-        'id': 'preset_2',
-        'name': '模板二：德',
-        'type': 'preset',
-        'description': '张锋身故案调查报告格式',
-        'content': '''被保险人{{insured_name}}身故案调查报告
+                'fields': [
+                    'insured_name', 'insurance_company', 'policy_no', 'insurance_period',
+                    'insurance_type', 'accident_time', 'case_description', 'verification_items',
+                    'investigation_content', 'investigation_location_1', 'investigation_content_1',
+                    'interviewee', 'interview_attachment', 'interview_content',
+                    'investigation_location_2', 'location_attachment', 'investigation_content_2',
+                    'investigation_location_3', 'contact_person', 'contact_attachment', 'investigation_content_3',
+                    'investigation_location_4', 'police_attachment', 'police_investigation_content',
+                    'investigation_location_5', 'medical_materials', 'medical_attachment', 'medical_investigation_content',
+                    'insurance_check_attachment', 'insurance_check_content',
+                    'reporter', 'attachment_1', 'attachment_2', 'attachment_3', 'attachment_4',
+                    'attachment_5', 'attachment_6', 'attachment_7', 'attachment_8', 'attachment_9',
+                    'attachment_10', 'additional_document',
+                    'summary_conclusion',
+                    'conclusion_1', 'conclusion_2', 'conclusion_3', 'conclusion_4',
+                    'investigator', 'reviewer', 'company_name', 'report_date'
+                ]
+            },
+            'preset_2': {
+                'id': 'preset_2',
+                'name': '模板二：德',
+                'type': 'preset',
+                'description': '张锋身故案调查报告格式',
+                'content': '''被保险人{{insured_name}}身故案调查报告
 
 {{case_date}}，接{{insurance_company}}委托，要求对{{policy_no}}号{{insurance_type}}保单项下被保险人{{insured_name}}于{{accident_time}}在{{accident_location}}案进行理赔调查（见附件一）。接案后我司委派工作人员就事故情况进行了调查核实，现秉承依法、独立、客观、公正的原则将调查情况报告如下：
 
@@ -143,23 +148,23 @@ PRESET_TEMPLATES = {
 {{company_name}}
 {{report_date}}
 ''',
-        'fields': [
-            'insured_name', 'insurance_company', 'policy_no', 'insurance_type',
-            'accident_time', 'accident_location', 'case_date', 'case_description',
-            'policies_detail', 'investigation_content', 'accident_reason',
-            'investigation_focus', 'summary', 'conclusion',
-            'liability_insured_name', 'liability_accident_time', 'liability_accident_location',
-            'liability_accident_cause', 'liability_victim_identity', 'liability_content',
-            'investigator', 'authorizer', 'assistant_investigator',
-            'company_name', 'report_date'
-        ]
-    },
-    'preset_3': {
-        'id': 'preset_3',
-        'name': '模板三：旭',
-        'type': 'preset',
-        'description': '胡宝林身故案调查报告格式',
-        'content': '''被保险人{{insured_name}}案身故案调查报告
+                'fields': [
+                    'insured_name', 'insurance_company', 'policy_no', 'insurance_type',
+                    'accident_time', 'accident_location', 'case_date', 'case_description',
+                    'policies_detail', 'investigation_content', 'accident_reason',
+                    'investigation_focus', 'summary', 'conclusion',
+                    'liability_insured_name', 'liability_accident_time', 'liability_accident_location',
+                    'liability_accident_cause', 'liability_victim_identity', 'liability_content',
+                    'investigator', 'authorizer', 'assistant_investigator',
+                    'company_name', 'report_date'
+                ]
+            },
+            'preset_3': {
+                'id': 'preset_3',
+                'name': '模板三：旭',
+                'type': 'preset',
+                'description': '胡宝林身故案调查报告格式',
+                'content': '''被保险人{{insured_name}}案身故案调查报告
 
 {{case_date}}，接{{insurance_company}}委托，要求对{{policy_no}}号{{insurance_type}}保单项下被保险人{{insured_name}}于{{accident_time}}{{accident_description}}案进行理赔调查（见附件一）。接案后我司委派工作人员就事故情况进行了调查核实，现秉承依法、独立、客观、公正的原则将调查情况报告如下：
 
@@ -191,12 +196,70 @@ PRESET_TEMPLATES = {
 {{company_name}}
 {{report_date}}
 ''',
-        'fields': [
-            'insured_name', 'insurance_company', 'policy_no', 'insurance_type',
-            'accident_time', 'accident_description', 'case_date', 'case_description',
-            'policy_holder', 'id_number', 'insurance_amount', 'insurance_period',
-            'special_agreements', 'investigation_content', 'summary', 'conclusion',
-            'investigator', 'reviewer', 'company_name', 'report_date'
-        ]
-    }
+                'fields': [
+                    'insured_name', 'insurance_company', 'policy_no', 'insurance_type',
+                    'accident_time', 'accident_description', 'case_date', 'case_description',
+                    'policy_holder', 'id_number', 'insurance_amount', 'insurance_period',
+                    'special_agreements', 'investigation_content', 'summary', 'conclusion',
+                    'investigator', 'reviewer', 'company_name', 'report_date'
+                ]
+            }
+        },
+        'docx_templates': {
+            'preset_1': 'template_preset_1.docx',
+            'preset_2': 'template_preset_2.docx',
+            'preset_3': 'template_preset_3.docx',
+        }
+    },
+    # 将来添加新公司只需在此添加：
+    # 'new_company': {
+    #     'id': 'new_company',
+    #     'name': '新公司名',
+    #     'display_name': '新公司全称',
+    #     'footer_text': '新公司底部文字',
+    #     'presets': { ... },
+    #     'docx_templates': { ... }
+    # }
 }
+
+DEFAULT_COMPANY = 'hengtaicheng'
+
+
+def get_company(company_id=None):
+    """获取公司配置，如果不存在则返回默认公司"""
+    if company_id and company_id in COMPANIES:
+        return COMPANIES[company_id]
+    return COMPANIES[DEFAULT_COMPANY]
+
+
+def get_presets(company_id=None):
+    """获取指定公司的预设模板列表"""
+    company = get_company(company_id)
+    return company['presets']
+
+
+def get_preset(preset_id, company_id=None):
+    """获取指定公司、指定ID的预设模板"""
+    presets = get_presets(company_id)
+    return presets.get(preset_id)
+
+
+def get_company_footer(company_id=None):
+    """获取公司底部文字"""
+    company = get_company(company_id)
+    return company.get('footer_text', '')
+
+
+def get_company_display_name(company_id=None):
+    """获取公司显示名称"""
+    company = get_company(company_id)
+    return company.get('display_name', company['name'])
+
+
+# ===== 向下兼容：保持旧的变量名导出，供其他模块使用 =====
+# 旧代码仍然可以使用 PRESET_TEMPLATES（默认公司）
+PRESET_TEMPLATES = get_presets(DEFAULT_COMPANY)
+
+def _get_preset_template(preset_id: str):
+    """获取预设模板（向下兼容）"""
+    return get_preset(preset_id, DEFAULT_COMPANY)

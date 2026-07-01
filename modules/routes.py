@@ -929,19 +929,53 @@ async def list_standard_templates():
     return {'success': True, 'templates': templates}
 
 
+# ============ 多公司支持 API ============
+@app.get('/api/companies')
+async def list_companies():
+    """列出所有公司"""
+    from modules.template_data import COMPANIES, DEFAULT_COMPANY
+    result = []
+    for cid, c in COMPANIES.items():
+        result.append({
+            'id': cid,
+            'name': c['name'],
+            'display_name': c.get('display_name', c['name']),
+            'is_default': cid == DEFAULT_COMPANY
+        })
+    return {'success': True, 'companies': result, 'default': DEFAULT_COMPANY}
+
+
+@app.get('/api/company/info')
+async def get_company_info(company: str = ''):
+    """获取指定公司信息"""
+    from modules.template_data import get_company, get_company_footer
+    c = get_company(company if company else None)
+    return {
+        'success': True,
+        'company': {
+            'id': c['id'],
+            'name': c['name'],
+            'display_name': c.get('display_name', c['name']),
+            'footer_text': c.get('footer_text', '')
+        }
+    }
+
+
 @app.get('/api/template/presets')
-async def list_preset_templates():
-    """列出所有预设模板"""
+async def list_preset_templates(company: str = ''):
+    """列出指定公司的预设模板（未指定则返回默认公司）"""
+    from modules.template_data import get_presets, get_company
+    company_presets = get_presets(company if company else None)
     presets = []
-    for tid, t in PRESET_TEMPLATES.items():
+    for tid, t in company_presets.items():
         presets.append({
             'id': tid,
             'name': t['name'],
             'type': 'preset',
-            'description': t['description'],
-            'fields': t['fields']
+            'description': t.get('description', ''),
+            'fields': t.get('fields', [])
         })
-    return {'success': True, 'presets': presets}
+    return {'success': True, 'presets': presets, 'company': company or 'hengtaicheng'}
 
 
 @app.get('/api/template/preset/{template_id}')
