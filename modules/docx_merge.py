@@ -170,6 +170,29 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         return bool(re.match(r'^[一二三四五六七八九十]+[、．\.]', para_text)) or \
                bool(re.match(r'^（[一二三四五六七八九十]+）', para_text))
 
+    def _is_only_number_or_empty(text):
+        """判断文本是否只包含编号没有正文（此类段落应跳过不输出）"""
+        if not text or not text.strip():
+            return True
+        s = text.strip()
+        # 纯数字
+        if s.isdigit():
+            return True
+        # 纯中文数字（一至十三等）
+        if re.match(r'^[一二三四五六七八九十]+$', s):
+            return True
+        # 编号+标点结尾（单独一行）
+        if re.match(r'^[（(]?\d+[）).、]?$', s):
+            return True
+        if re.match(r'^[①-⑩]$', s):
+            return True
+        if re.match(r'^[A-Z][、．\.]?$', s):
+            return True
+        # 只含有编号和标点符号
+        if re.match(r'^[\d一二三四五六七八九十①-⑩、．\.）).(（\s]+$', s) and len(s) <= 3:
+            return True
+        return False
+
     def _strip_source_numbering(text):
         """剥离段落开头的编号，保留纯文本内容"""
         if not text:
@@ -243,6 +266,11 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         if is_chapter_content and not is_report_title and not is_chapter_title:
             clean_text = _strip_source_numbering(para_text_stripped)
         
+        # 如果清洗后只剩编号/空内容，跳过不输出（通过返回False告知调用者）
+        if is_chapter_content and not is_report_title and not is_chapter_title:
+            if _is_only_number_or_empty(clean_text):
+                return False
+        
         # 更新 run 的文本和格式
         first_run = True
         for r in para_elem.findall(f'{{{nsp["w"]}}}r'):
@@ -289,8 +317,9 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
                 elem = deepcopy(all_source_paras[pi])
                 # 第一个前导段落视为报告标题（小三加粗，保留编号），其余剥离编号
                 is_first = (pi == source_pre_indices[0])
-                _strip_source_formatting_and_apply_style(elem, is_title=is_first, is_chapter_content=not is_first)
-                new_body.append(elem)
+                result = _strip_source_formatting_and_apply_style(elem, is_title=is_first, is_chapter_content=not is_first)
+                if result is not False:
+                    new_body.append(elem)
     else:
         for pi in tpl_pre_paras_indices:
             if pi < len(all_tpl_paras):
@@ -309,10 +338,11 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
                 if si < len(all_source_paras):
                     elem = deepcopy(all_source_paras[si])
                     try:
-                        _strip_source_formatting_and_apply_style(elem, is_chapter_content=True)
+                        result = _strip_source_formatting_and_apply_style(elem, is_chapter_content=True)
+                        if result is not False:
+                            new_body.append(elem)
                     except:
                         pass
-                    new_body.append(elem)
         else:
             # 源文档没有此编号 → 空段落
             empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
@@ -327,10 +357,11 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
                 if si < len(all_source_paras):
                     elem = deepcopy(all_source_paras[si])
                     try:
-                        _strip_source_formatting_and_apply_style(elem, is_chapter_content=True)
+                        result = _strip_source_formatting_and_apply_style(elem, is_chapter_content=True)
+                        if result is not False:
+                            new_body.append(elem)
                     except:
                         pass
-                    new_body.append(elem)
     
     # ====== 4. 后置内容（声明等） ======
     for pi in tpl_post_paras_indices:
