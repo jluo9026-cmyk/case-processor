@@ -12,7 +12,31 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from starlette.middleware.base import BaseHTTPMiddleware
 from modules.app_core import app
+
+
+class SessionTrackingMiddleware(BaseHTTPMiddleware):
+    """追踪所有 API 请求，记录活跃会话"""
+    async def dispatch(self, request, call_next):
+        # 只跟踪 API 请求
+        if request.url.path.startswith('/api/'):
+            from modules.auth import record_request
+            token = ''
+            auth = request.headers.get('authorization', '')
+            if auth.startswith('Bearer '):
+                token = auth[7:]
+            if not token:
+                # 从 query string 中获取 token
+                query_params = dict(request.query_params)
+                token = query_params.get('token', '')
+            if token:
+                record_request(token)
+        response = await call_next(request)
+        return response
+
+
+app.add_middleware(SessionTrackingMiddleware)
 from modules.config import BASE_DIR as C_BASE_DIR, UPLOAD_DIR, OUTPUT_DIR
 # ===== 注册所有 API 路由 =====
 from modules import routes
