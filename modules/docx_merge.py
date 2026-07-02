@@ -234,14 +234,25 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             break
         return stripped
 
-    def _strip_source_formatting_and_apply_style(para_elem, is_title=False, is_chapter_content=False):
+    _auto_number_counter = 0
+
+    def _reset_auto_number():
+        nonlocal _auto_number_counter
+        _auto_number_counter = 0
+
+    def _get_auto_number_str():
+        nonlocal _auto_number_counter
+        _auto_number_counter += 1
+        return f'{_auto_number_counter}、'
+
+    def _strip_source_formatting_and_apply_style(para_elem, is_title=False, is_chapter_content=False, add_number=False):
         """清除源段落所有格式（字体+编号），统一应用宋体+指定字号"""
         texts = para_elem.findall('.//w:t', nsp)
         para_text = ''.join(t.text or '' for t in texts).strip()
         if not para_text:
-            return
+            return False  # BUG FIX: 返回 False 而非 None
         
-        # 清除段落格式（pPr）
+        # 彻底清除段落格式（pPr）
         pPr = para_elem.find(f'{{{nsp["w"]}}}pPr')
         if pPr is not None:
             jc = pPr.find(f'{{{nsp["w"]}}}jc')
@@ -249,12 +260,10 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             if jc is not None:
                 jc_val = jc.get(f'{{{nsp["w"]}}}val')
             para_elem.remove(pPr)
-            new_pPr = etree.SubElement(para_elem, f'{{{nsp["w"]}}}pPr')
-            if jc_val:
-                new_jc = etree.SubElement(new_pPr, f'{{{nsp["w"]}}}jc')
-                new_jc.set(f'{{{nsp["w"]}}}val', jc_val)
-        else:
-            new_pPr = etree.SubElement(para_elem, f'{{{nsp["w"]}}}pPr')
+        new_pPr = etree.SubElement(para_elem, f'{{{nsp["w"]}}}pPr')
+        if jc_val:
+            new_jc = etree.SubElement(new_pPr, f'{{{nsp["w"]}}}jc')
+            new_jc.set(f'{{{nsp["w"]}}}val', jc_val)
         
         para_text_stripped = para_text.strip()
         is_report_title = is_title if is_title else False
@@ -271,17 +280,23 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             font_size = '28'
             bold = False
         
-        # 如果是章节内容段落（非标题、非报告标题），剥离编号
+        # 如果是章节内容段落，清除编号
         clean_text = para_text_stripped
         if is_chapter_content and not is_report_title and not is_chapter_title:
             clean_text = _strip_source_numbering(para_text_stripped)
+            # 过滤掉只剩编号/空的内容
+            if not clean_text or _is_only_number_or_empty(clean_text):
+                return False  # BUG FIX: 返回 False 让调用者跳过
         
-        # 如果清洗后只剩编号/空内容，跳过不输出（通过返回False告知调用者）
-        if is_chapter_content and not is_report_title and not is_chapter_title:
-            if _is_only_number_or_empty(clean_text):
-                return False
+        # 如果需要自动编号，在文本前加上 "1、" "2、" ...
+        if add_number and not is_report_title and not is_chapter_title and clean_text:
+            num_str = _get_auto_number_str()
+            clean_text = num_str + clean_text
+            # 添加缩进 1.0 英寸(720 twips)
+            ind = etree.SubElement(new_pPr, f'{{{nsp["w"]}}}ind')
+            ind.set(f'{{{nsp["w"]}}}left', '720')
         
-        # 更新 run 的文本和格式
+        # 更新所有 run：文本和格式
         first_run = True
         for r in para_elem.findall(f'{{{nsp["w"]}}}r'):
             rPr = r.find(f'{{{nsp["w"]}}}rPr')
@@ -298,8 +313,6 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             szCs.set(f'{{{nsp["w"]}}}val', font_size)
             if bold:
                 b = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}b')
-            
-            # 更新文本：第一个 run 放清洗后的文本，后续 run 清空
             t_elem = r.find(f'{{{nsp["w"]}}}t')
             if t_elem is not None:
                 if first_run:
@@ -338,6 +351,8 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
     # ====== 2. 按编号对应填充章节 ======
     used_source_nums = set()
     for tpl_num, tpl_title_idx, tpl_content_indices in tpl_chapters:
+        # 每个章节重置自动编号计数器
+        _reset_auto_number()
         # 输出模板标题（保留模板格式）
         if tpl_title_idx < len(all_tpl_paras):
             new_body.append(deepcopy(all_tpl_paras[tpl_title_idx]))
