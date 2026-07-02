@@ -235,13 +235,30 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         return stripped
 
     _auto_number_counter = 0
+    _sub_number_active = False
+    _sub_number_counter = 0
 
     def _reset_auto_number():
-        nonlocal _auto_number_counter
+        nonlocal _auto_number_counter, _sub_number_active, _sub_number_counter
         _auto_number_counter = 0
+        _sub_number_active = False
+        _sub_number_counter = 0
 
-    def _get_auto_number_str():
-        nonlocal _auto_number_counter
+    def _get_auto_number_str(text_after_clean):
+        """根据文本内容决定使用主编号还是二级编号"""
+        nonlocal _auto_number_counter, _sub_number_active, _sub_number_counter
+        # 判断上一行是否以：或:结尾 → 激活二级编号
+        if text_after_clean and (text_after_clean.rstrip().endswith('：') or text_after_clean.rstrip().endswith(':')):
+            _sub_number_active = True
+            _sub_number_counter = 0
+            # 主编号仍然递增
+            _auto_number_counter += 1
+            return f'{_auto_number_counter}.'
+        # 如果二级编号已激活
+        if _sub_number_active:
+            _sub_number_counter += 1
+            return f'（{_sub_number_counter}）'
+        # 普通主编号
         _auto_number_counter += 1
         return f'{_auto_number_counter}.'
 
@@ -288,9 +305,9 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             if not clean_text or _is_only_number_or_empty(clean_text):
                 return False  # BUG FIX: 返回 False 让调用者跳过
         
-        # 如果需要自动编号，在文本前加上 "1、" "2、" ...
+        # 如果需要自动编号，在文本前加上 "1." "2." 或 "（1）" "（2）" ...
         if add_number and not is_report_title and not is_chapter_title and clean_text:
-            num_str = _get_auto_number_str()
+            num_str = _get_auto_number_str(clean_text)
             clean_text = num_str + clean_text
             # 添加缩进 1.0 英寸(720 twips)
             ind = etree.SubElement(new_pPr, f'{{{nsp["w"]}}}ind')
