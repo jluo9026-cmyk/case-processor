@@ -173,7 +173,7 @@ async def _background_report_job(
             if not ocr_result and QWEN_VL_API_KEY:
                 print(f'[DEBUG] 百度OCR失败，尝试千问VL识别...')
                 try:
-                    description = await _call_qwen_vl(img_base64)
+                    description = await _call_qwen_vl(img_base64, mode='ocr')
                     if description:
                         ocr_result = {'name': img_info['name'], 'text': description}
                         print(f'[Qwen-VL] 识别 {img_info["name"]} 成功，长度 {len(ocr_result["text"])}')
@@ -193,7 +193,7 @@ async def _background_report_job(
                 try:
                     img_type = await asyncio.to_thread(_classify_image, img_base64)
                     if img_type == 'visual':
-                        description = await _call_qwen_vl(img_base64)
+                        description = await _call_qwen_vl(img_base64, mode='describe')
                         if description:
                             visual_result = {'name': img_info['name'], 'description': description}
                 except Exception as e:
@@ -1343,7 +1343,7 @@ async def run_report_with_preset(request: Request):
                 log_write(f'[DEBUG] 百度OCR失败，尝试千问VL...')
                 if QWEN_VL_API_KEY:
                     try:
-                        description = await _call_qwen_vl(img_base64)
+                        description = await _call_qwen_vl(img_base64, mode='ocr')
                         if description:
                             log_write(f'[Qwen-VL] 识别 {filename} 成功，长度 {len(description)}')
                             return {

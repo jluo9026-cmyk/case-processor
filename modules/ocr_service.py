@@ -116,13 +116,23 @@ def _call_baidu_ocr(image_base64: str) -> dict:
         raise
 
 
-async def _call_qwen_vl(image_base64: str) -> str:
-    """调用Qwen-VL视觉模型"""
+async def _call_qwen_vl(image_base64: str, mode: str = 'ocr') -> str:
+    """调用Qwen-VL视觉模型
+    Args:
+        image_base64: base64编码的图片
+        mode: 'ocr' - 精准文字提取, 'describe' - 图片描述
+    """
     try:
         headers = {
             "Authorization": f"Bearer {QWEN_VL_API_KEY}",
             "Content-Type": "application/json"
         }
+        
+        if mode == 'ocr':
+            prompt = "请仔细、完整地提取这张图片中所有可见的文字内容。按原文顺序逐字输出，不要添加任何描述、解释或额外的文字。如果图片中有多个文字区域，请按从上到下、从左到右的顺序输出。"
+        else:
+            prompt = "请详细描述这张图片的内容，包括文字、场景、人物、物品等所有可见信息。"
+        
         payload = {
             "model": "qwen-vl-plus",
             "messages": [
@@ -130,7 +140,7 @@ async def _call_qwen_vl(image_base64: str) -> str:
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
-                        {"type": "text", "text": "请详细描述这张图片的内容，包括文字、场景、人物、物品等所有可见信息。"}
+                        {"type": "text", "text": prompt}
                     ]
                 }
             ]
