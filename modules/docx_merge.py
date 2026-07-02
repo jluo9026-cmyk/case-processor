@@ -170,9 +170,39 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         return bool(re.match(r'^[一二三四五六七八九十]+[、．\.]', para_text)) or \
                bool(re.match(r'^（[一二三四五六七八九十]+）', para_text))
 
-    def _strip_source_formatting_and_apply_style(para_elem, is_title=False):
-        """清除源段落所有格式，统一应用宋体+指定字号"""
-        # 只处理段落文本（跳过空段落）
+    def _strip_source_numbering(text):
+        """剥离段落开头的编号，保留纯文本内容"""
+        if not text:
+            return text
+        stripped = text.strip()
+        # 匹配并剥离以下编号模式：
+        # 一、 二、 三、  ... 十、 (中文数字章节编号)
+        # （一）（二）...（十）(中文数字括号编号)
+        # 1、2、3、... (数字顿号)
+        # 1. 2. 3. ... (数字点号)
+        # 1）2）3）... (数字括号)
+        # (1)(2)(3)... (圆括号数字)
+        # ①②③... (带圈数字)
+        patterns = [
+            r'^[一二三四五六七八九十]+[、．\.]\s*',        # 一、 二．
+            r'^（[一二三四五六七八九十]+）\s*',               # （一）
+            r'^[(（]\d+[)）]\s*',                             # (1) （2）
+            r'^\d+[）).、．]\s*',                             # 1） 2. 3、
+            r'^[①-⑩]\s*',                                   # ①②...
+            r'^第[一二三四五六七八九十]+[、．\.]\s*',         # 第一、
+            r'^[A-Z][、．\.]\s*',                             # A. B、
+        ]
+        for pat in patterns:
+            m = re.match(pat, stripped)
+            if m:
+                stripped = stripped[m.end():].strip()
+                # 继续匹配（防止多重编号如 "2、1）"）
+                continue
+            break
+        return stripped
+
+    def _strip_source_formatting_and_apply_style(para_elem, is_title=False, is_chapter_content=False):
+        """清除源段落所有格式（字体+编号），统一应用宋体+指定字号"""
         texts = para_elem.findall('.//w:t', nsp)
         para_text = ''.join(t.text or '' for t in texts).strip()
         if not para_text:
@@ -181,7 +211,6 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         # 清除段落格式（pPr）
         pPr = para_elem.find(f'{{{nsp["w"]}}}pPr')
         if pPr is not None:
-            # 保留对齐方式设置（如果段落居中则保留）
             jc = pPr.find(f'{{{nsp["w"]}}}jc')
             jc_val = None
             if jc is not None:
@@ -194,43 +223,52 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         else:
             new_pPr = etree.SubElement(para_elem, f'{{{nsp["w"]}}}pPr')
         
-        # 判断是否为报告标题（第一个前导段落往往就是报告标题）
         para_text_stripped = para_text.strip()
         is_report_title = is_title if is_title else False
-        
-        # 判断是否为章节标题
         is_chapter_title = _is_heading_text(para_text_stripped)
         
-        # 设置字号：报告标题＝小三(15pt=30半磅)，章节标题/正文＝四号(14pt=28半磅)
+        # 设置字号
         if is_report_title:
-            font_size = '30'  # 小三
+            font_size = '30'
             bold = True
         elif is_chapter_title:
-            font_size = '28'  # 四号
+            font_size = '28'
             bold = True
         else:
-            font_size = '28'  # 四号
+            font_size = '28'
             bold = False
         
-        # 在每个 run 上应用格式
+        # 如果是章节内容段落（非标题、非报告标题），剥离编号
+        clean_text = para_text_stripped
+        if is_chapter_content and not is_report_title and not is_chapter_title:
+            clean_text = _strip_source_numbering(para_text_stripped)
+        
+        # 更新 run 的文本和格式
+        first_run = True
         for r in para_elem.findall(f'{{{nsp["w"]}}}r'):
             rPr = r.find(f'{{{nsp["w"]}}}rPr')
             if rPr is not None:
                 r.remove(rPr)
             new_rPr = etree.SubElement(r, f'{{{nsp["w"]}}}rPr')
-            # 宋体
             rFonts = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}rFonts')
             rFonts.set(f'{{{nsp["w"]}}}ascii', 'SimSun')
             rFonts.set(f'{{{nsp["w"]}}}eastAsia', 'SimSun')
             rFonts.set(f'{{{nsp["w"]}}}hAnsi', 'SimSun')
-            # 字号
             sz = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}sz')
             sz.set(f'{{{nsp["w"]}}}val', font_size)
             szCs = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}szCs')
             szCs.set(f'{{{nsp["w"]}}}val', font_size)
-            # 加粗
             if bold:
                 b = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}b')
+            
+            # 更新文本：第一个 run 放清洗后的文本，后续 run 清空
+            t_elem = r.find(f'{{{nsp["w"]}}}t')
+            if t_elem is not None:
+                if first_run:
+                    t_elem.text = clean_text
+                    first_run = False
+                else:
+                    t_elem.text = ''
     
     # ========== 第五步：构建新文档 ==========
     new_doc_xml = deepcopy(tpl_doc_xml)
@@ -249,9 +287,9 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         for pi in source_pre_indices:
             if pi < len(all_source_paras):
                 elem = deepcopy(all_source_paras[pi])
-                # 第一个前导段落视为报告标题（小三加粗），其余为正文（四号）
+                # 第一个前导段落视为报告标题（小三加粗，保留编号），其余剥离编号
                 is_first = (pi == source_pre_indices[0])
-                _strip_source_formatting_and_apply_style(elem, is_title=is_first)
+                _strip_source_formatting_and_apply_style(elem, is_title=is_first, is_chapter_content=not is_first)
                 new_body.append(elem)
     else:
         for pi in tpl_pre_paras_indices:
@@ -271,7 +309,7 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
                 if si < len(all_source_paras):
                     elem = deepcopy(all_source_paras[si])
                     try:
-                        _strip_source_formatting_and_apply_style(elem)
+                        _strip_source_formatting_and_apply_style(elem, is_chapter_content=True)
                     except:
                         pass
                     new_body.append(elem)
@@ -289,7 +327,7 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
                 if si < len(all_source_paras):
                     elem = deepcopy(all_source_paras[si])
                     try:
-                        _strip_source_formatting_and_apply_style(elem)
+                        _strip_source_formatting_and_apply_style(elem, is_chapter_content=True)
                     except:
                         pass
                     new_body.append(elem)
