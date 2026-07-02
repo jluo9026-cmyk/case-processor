@@ -56,6 +56,7 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
     """将上传文档的内容按章节编号一一对应合并到模板中"""
     import zipfile
     import io as _io
+    import re as _re  # ✅ 修复：避免局部作用域中的 re 命名冲突
     from lxml import etree
     from copy import deepcopy
     
@@ -167,8 +168,8 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
     def _is_heading_text(para_text):
         if not para_text:
             return False
-        return bool(re.match(r'^[一二三四五六七八九十]+[、．\.]', para_text)) or \
-               bool(re.match(r'^（[一二三四五六七八九十]+）', para_text))
+        return bool(_re.match(r'^[一二三四五六七八九十]+[、．\.]', para_text)) or \
+               bool(_re.match(r'^（[一二三四五六七八九十]+）', para_text))
 
     def _is_only_number_or_empty(text):
         """判断文本是否只包含编号没有正文（此类段落应跳过不输出）"""
@@ -179,7 +180,7 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         if s.isdigit():
             return True
         # 纯中文数字（一至十三等）
-        if re.match(r'^[一二三四五六七八九十]+$', s):
+        if _re.match(r'^[一二三四五六七八九十]+$', s):
             return True
         # 各种编号形式，长度<=5个字符，没有中文正文
         lone_number_patterns = [
@@ -194,11 +195,11 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             r'^第[一二三四五六七八九十]+[、．\.]?$',  # 第一、第二
         ]
         for pat in lone_number_patterns:
-            if re.match(pat, s):
+            if _re.match(pat, s):
                 return True
         # 只有数字+常见编号标点，没有中文汉字
-        if not re.search(r'[\u4e00-\u9fff]', s) and not re.search(r'[a-zA-Z]{2,}', s):
-            cleaned = re.sub(r'[\d\s、．\.）).(（\d①-⑩A-Za-z]', '', s)
+        if not _re.search(r'[\u4e00-\u9fff]', s) and not _re.search(r'[a-zA-Z]{2,}', s):
+            cleaned = _re.sub(r'[\d\s、．\.）).(（\d①-⑩A-Za-z]', '', s)
             if not cleaned:
                 return True
         return False
@@ -226,7 +227,7 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             r'^[A-Z][、．\.]\s*',                             # A. B、
         ]
         for pat in patterns:
-            m = re.match(pat, stripped)
+            m = _re.match(pat, stripped)
             if m:
                 stripped = stripped[m.end():].strip()
                 # 继续匹配（防止多重编号如 "2、1）"）
