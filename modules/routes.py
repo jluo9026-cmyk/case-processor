@@ -1038,6 +1038,40 @@ async def admin_delete_user(request: Request):
         return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
 
 
+@app.get('/api/admin/sessions')
+async def admin_sessions(token: str = ''):
+    """管理员：查看在线会话"""
+    try:
+        _require_admin(token)
+    except HTTPException as e:
+        return {'success': False, 'error': e.detail}
+    from modules.auth import get_online_sessions, get_online_count, get_total_request_count
+    sessions = get_online_sessions()
+    return {
+        'success': True,
+        'sessions': sessions,
+        'online_count': get_online_count(),
+        'total_requests': get_total_request_count()
+    }
+
+
+@app.post('/api/admin/kick-user')
+async def admin_kick_user(request: Request):
+    """管理员：强制用户下线（踢出所有会话）"""
+    try:
+        body = await request.json()
+        token = body.get('token', '')
+        _require_admin(token)
+        username = body.get('username', '')
+        from modules.auth import blacklist_user_sessions
+        count = blacklist_user_sessions(username)
+        return {'success': True, 'kicked_sessions': count, 'message': f'已强制 {username} 的 {count} 个会话下线'}
+    except HTTPException as e:
+        return {'success': False, 'error': e.detail}
+    except Exception as e:
+        return JSONResponse(content={'success': False, 'error': str(e)}, status_code=500)
+
+
 @app.get('/api/admin/stats')
 async def admin_stats(token: str = ''):
     """管理员：系统使用统计"""
@@ -1507,7 +1541,6 @@ async def run_report_with_preset(request: Request):
         if remaining > 0:
             log_write(f'[WARNING] 仍有 {remaining} 个未替换的占位符')
             # 将剩余占位符替换为默认值
-            import re
             report_content = re.sub(r'\{\{[^}]+\}\}', '待核实', report_content)
         
         log_write(f'[DEBUG] 最终报告长度: {len(report_content)}')
