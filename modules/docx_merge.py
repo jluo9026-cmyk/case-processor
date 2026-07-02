@@ -243,7 +243,7 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
     def _get_auto_number_str():
         nonlocal _auto_number_counter
         _auto_number_counter += 1
-        return f'{_auto_number_counter}、'
+        return f'{_auto_number_counter}.'
 
     def _strip_source_formatting_and_apply_style(para_elem, is_title=False, is_chapter_content=False, add_number=False):
         """清除源段落所有格式（字体+编号），统一应用宋体+指定字号"""
@@ -363,7 +363,7 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
                 if si < len(all_source_paras):
                     elem = deepcopy(all_source_paras[si])
                     try:
-                        result = _strip_source_formatting_and_apply_style(elem, is_chapter_content=True)
+                        result = _strip_source_formatting_and_apply_style(elem, is_chapter_content=True, add_number=True)
                         if result is not False:
                             new_body.append(elem)
                     except:
