@@ -134,7 +134,37 @@ async def root():
 
 @app.get('/api/health')
 async def health():
-    return {'status':'ok','service':'combined-backend','version':'2.0.0'}
+    return {
+        'status':'ok',
+        'service':'combined-backend',
+        'version':'2.0.0',
+        'env_check': {
+            'baidu_configured': bool(os.getenv('BAIDU_API_KEY') and os.getenv('BAIDU_SECRET_KEY')),
+            'qwen_vl_configured': bool(os.getenv('QWEN_VL_API_KEY')),
+            'deepseek_configured': bool(os.getenv('DEEPSEEK_API_KEY')),
+        }
+    }
+
+
+@app.get('/api/diag-env')
+async def diag_env():
+    """诊断环境变量（隐藏密钥内容，只显示前4位）"""
+    def mask_key(key):
+        if not key:
+            return None
+        return key[:4] + '****' if len(key) > 4 else '****'
+    
+    return {
+        'status': 'ok',
+        'env': {
+            'BAIDU_API_KEY': mask_key(os.getenv('BAIDU_API_KEY', '')),
+            'BAIDU_SECRET_KEY': mask_key(os.getenv('BAIDU_SECRET_KEY', '')),
+            'QWEN_VL_API_KEY': mask_key(os.getenv('QWEN_VL_API_KEY', '')),
+            'QWEN_VL_BASE_URL': os.getenv('QWEN_VL_BASE_URL', ''),
+            'DEEPSEEK_API_KEY': mask_key(os.getenv('DEEPSEEK_API_KEY', '')),
+            'DEEPSEEK_BASE_URL': os.getenv('DEEPSEEK_BASE_URL', ''),
+        }
+    }
 
 @app.get('/static/{fp:path}')
 async def serve_static(fp:str):
