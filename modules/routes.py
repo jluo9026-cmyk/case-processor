@@ -1485,17 +1485,18 @@ async def run_report_with_preset(request: Request):
                     cleaned_lines.append(line)
             if cleaned_lines:
                 report_content = '\n'.join(cleaned_lines)
-            return {
-                'success': True,
-                'report_content': report_content,
-                'template_id': template_id or 'preset_1',
-                'template_name': template_name,
-                'used_ai_fallback': True,
-                'ocr_count': len(ocr_results),
-                'combined_text': all_ocr_combined,
-                'total_images': len(all_files),
-                'investigation_text': investigation_text
-            }
+        return {
+            'success': True,
+            'report_content': report_content,
+            'template_id': template_id or 'preset_1',
+            'template_name': template_name,
+            'used_ai_fallback': True,
+            'ocr_count': len(ocr_results),
+            'combined_text': all_ocr_combined,
+            'total_images': len(all_files),
+            'investigation_text': investigation_text,
+            'ocr_details': [{'name': r['name'], 'text': r['text'], 'type': '笔录' if r.get('is_statement') else '现场图片'} for r in ocr_results]
+        }
         
         # 获取选择的模板
         selected_template = PRESET_TEMPLATES.get(template_id, PRESET_TEMPLATES['preset_1'])
@@ -1601,7 +1602,8 @@ async def run_report_with_preset(request: Request):
             'ocr_count': len(ocr_results),
             'combined_text': all_ocr_combined,
             'total_images': len(all_files),
-            'investigation_text': investigation_text
+            'investigation_text': investigation_text,
+            'ocr_details': [{'name': r['name'], 'text': r['text'], 'type': '笔录' if r.get('is_statement') else '现场图片'} for r in ocr_results]
         }
     except Exception as e:
         log_write(f'[ERROR] 生成报告异常: {e}')

@@ -91,6 +91,10 @@
       <div class="stats" id="resultStats" style="display:none">
         <div class="stat-item"><div class="num" id="resultImages">0</div><div class="label">识别图片数</div></div>
         <div class="stat-item"><div class="num" id="resultOcrLen">0</div><div class="label">OCR字符数</div></div>
+        <div class="stat-item" style="cursor:pointer;background:#e8f0fe;border:1px solid #4a6cf7;" onclick="openOcrDetails()">
+          <div class="num" style="font-size:18px;color:#4a6cf7;">👁️</div>
+          <div class="label" style="color:#4a6cf7;font-weight:500;">查看OCR详情</div>
+        </div>
       </div>
       <div class="tabs">
         <div class="tab active" data-tab="final">最终报告</div>
@@ -147,6 +151,19 @@
         <div class="progress-text" id="progressText">等待中...</div>
       </div>
       <button class="btn btn-outline copy-btn" id="btnCopy">📋 复制报告</button>
+    </div>
+  </div>
+
+  <!-- OCR详情模态框 -->
+  <div class="modal-overlay" id="ocrModalOverlay" style="display:none;" onclick="closeOcrDetails(event)">
+    <div class="modal-container" id="ocrModalContainer">
+      <div class="modal-header">
+        <h3>🔍 OCR文字识别详情</h3>
+        <button class="modal-close-btn" onclick="closeOcrDetails()">×</button>
+      </div>
+      <div class="modal-body" id="ocrModalBody">
+        <div class="ocr-details-loading">加载中...</div>
+      </div>
     </div>
   </div>
 

@@ -830,6 +830,65 @@ function bindConvertEvents() {
   el.btnConvert.addEventListener('click', startConvertDocx);
 }
 
+// ========== OCR详情模态框 ==========
+function openOcrDetails() {
+  const overlay = document.getElementById('ocrModalOverlay');
+  const body = document.getElementById('ocrModalBody');
+  if (!overlay || !body) return;
+  
+  const details = state.currentResult?.ocr_details;
+  
+  if (!details || details.length === 0) {
+    body.innerHTML = `
+      <div class="ocr-detail-empty">
+        <span class="ocr-detail-empty-icon">📭</span>
+        <div>暂无OCR识别内容</div>
+        <div style="font-size:12px;color:#bbb;margin-top:8px;">上传图片后生成报告即可查看每张图片的OCR识别结果</div>
+      </div>
+    `;
+    overlay.style.display = 'flex';
+    return;
+  }
+  
+  let html = '';
+  details.forEach((item, idx) => {
+    const typeLabel = item.type === '笔录' ? '📋 笔录' : '🖼️ 现场图片';
+    const badgeClass = item.type === '笔录' ? 'statement' : 'scene';
+    const text = item.text || '(未识别到文字)';
+    html += `
+      <div class="ocr-detail-item">
+        <div class="ocr-detail-header">
+          <span>${typeLabel}</span>
+          <span class="ocr-detail-filename">${item.name}</span>
+          <span class="ocr-detail-badge ${badgeClass}">#${idx + 1}</span>
+        </div>
+        <div class="ocr-detail-body">${escapeHtml(text)}</div>
+      </div>
+    `;
+  });
+  
+  body.innerHTML = html;
+  overlay.style.display = 'flex';
+}
+
+function closeOcrDetails(event) {
+  const overlay = document.getElementById('ocrModalOverlay');
+  if (!overlay) return;
+  if (event && event.target !== overlay) return; // 点击内部不关闭
+  overlay.style.display = 'none';
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// 暴露到全局，供 HTML onclick 调用
+window.openOcrDetails = openOcrDetails;
+window.closeOcrDetails = closeOcrDetails;
+
 async function init() {
   bindEvents();
   bindConvertEvents();
