@@ -163,6 +163,75 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
     for snum, s_indices in source_chapters:
         source_by_num[snum] = s_indices
     
+    # 判断段落是否为章节标题（用于格式化）
+    def _is_heading_text(para_text):
+        if not para_text:
+            return False
+        return bool(re.match(r'^[一二三四五六七八九十]+[、．\.]', para_text)) or \
+               bool(re.match(r'^（[一二三四五六七八九十]+）', para_text))
+
+    def _strip_source_formatting_and_apply_style(para_elem, is_title=False):
+        """清除源段落所有格式，统一应用宋体+指定字号"""
+        # 只处理段落文本（跳过空段落）
+        texts = para_elem.findall('.//w:t', nsp)
+        para_text = ''.join(t.text or '' for t in texts).strip()
+        if not para_text:
+            return
+        
+        # 清除段落格式（pPr）
+        pPr = para_elem.find(f'{{{nsp["w"]}}}pPr')
+        if pPr is not None:
+            # 保留对齐方式设置（如果段落居中则保留）
+            jc = pPr.find(f'{{{nsp["w"]}}}jc')
+            jc_val = None
+            if jc is not None:
+                jc_val = jc.get(f'{{{nsp["w"]}}}val')
+            para_elem.remove(pPr)
+            new_pPr = etree.SubElement(para_elem, f'{{{nsp["w"]}}}pPr')
+            if jc_val:
+                new_jc = etree.SubElement(new_pPr, f'{{{nsp["w"]}}}jc')
+                new_jc.set(f'{{{nsp["w"]}}}val', jc_val)
+        else:
+            new_pPr = etree.SubElement(para_elem, f'{{{nsp["w"]}}}pPr')
+        
+        # 判断是否为报告标题（第一个前导段落往往就是报告标题）
+        para_text_stripped = para_text.strip()
+        is_report_title = is_title if is_title else False
+        
+        # 判断是否为章节标题
+        is_chapter_title = _is_heading_text(para_text_stripped)
+        
+        # 设置字号：报告标题＝小三(15pt=30半磅)，章节标题/正文＝四号(14pt=28半磅)
+        if is_report_title:
+            font_size = '30'  # 小三
+            bold = True
+        elif is_chapter_title:
+            font_size = '28'  # 四号
+            bold = True
+        else:
+            font_size = '28'  # 四号
+            bold = False
+        
+        # 在每个 run 上应用格式
+        for r in para_elem.findall(f'{{{nsp["w"]}}}r'):
+            rPr = r.find(f'{{{nsp["w"]}}}rPr')
+            if rPr is not None:
+                r.remove(rPr)
+            new_rPr = etree.SubElement(r, f'{{{nsp["w"]}}}rPr')
+            # 宋体
+            rFonts = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}rFonts')
+            rFonts.set(f'{{{nsp["w"]}}}ascii', 'SimSun')
+            rFonts.set(f'{{{nsp["w"]}}}eastAsia', 'SimSun')
+            rFonts.set(f'{{{nsp["w"]}}}hAnsi', 'SimSun')
+            # 字号
+            sz = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}sz')
+            sz.set(f'{{{nsp["w"]}}}val', font_size)
+            szCs = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}szCs')
+            szCs.set(f'{{{nsp["w"]}}}val', font_size)
+            # 加粗
+            if bold:
+                b = etree.SubElement(new_rPr, f'{{{nsp["w"]}}}b')
+    
     # ========== 第五步：构建新文档 ==========
     new_doc_xml = deepcopy(tpl_doc_xml)
     new_body = new_doc_xml.find('.//w:body', nsp)
@@ -179,7 +248,11 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
     if source_pre_indices:
         for pi in source_pre_indices:
             if pi < len(all_source_paras):
-                new_body.append(deepcopy(all_source_paras[pi]))
+                elem = deepcopy(all_source_paras[pi])
+                # 第一个前导段落视为报告标题（小三加粗），其余为正文（四号）
+                is_first = (pi == source_pre_indices[0])
+                _strip_source_formatting_and_apply_style(elem, is_title=is_first)
+                new_body.append(elem)
     else:
         for pi in tpl_pre_paras_indices:
             if pi < len(all_tpl_paras):
@@ -196,7 +269,12 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             used_source_nums.add(tpl_num)
             for si in source_by_num[tpl_num]:
                 if si < len(all_source_paras):
-                    new_body.append(deepcopy(all_source_paras[si]))
+                    elem = deepcopy(all_source_paras[si])
+                    try:
+                        _strip_source_formatting_and_apply_style(elem)
+                    except:
+                        pass
+                    new_body.append(elem)
         else:
             # 源文档没有此编号 → 空段落
             empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
@@ -209,7 +287,12 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         if snum not in used_source_nums:
             for si in s_indices:
                 if si < len(all_source_paras):
-                    new_body.append(deepcopy(all_source_paras[si]))
+                    elem = deepcopy(all_source_paras[si])
+                    try:
+                        _strip_source_formatting_and_apply_style(elem)
+                    except:
+                        pass
+                    new_body.append(elem)
     
     # ====== 4. 后置内容（声明等） ======
     for pi in tpl_post_paras_indices:
