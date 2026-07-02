@@ -365,36 +365,118 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
             if pi < len(all_tpl_paras):
                 new_body.append(deepcopy(all_tpl_paras[pi]))
     
-    # ====== 2. 按编号对应填充章节 ======
+    # 为模板每个章节定义关键词，用于内容→标题的智能匹配
+    # （内容中的关键词匹配数越多，越可能属于这个章节）
+    TPL_KEYWORDS = {
+        1: ['保单', '保额', '保险期限', '被保险人', '险种', '特约', '保险单', '承保', '投保人', 
+            '伤亡责任', '医疗费用责任', '免赔', '赔付比例', '伤残评定'],
+        2: ['委托', '接案', '转案', '受理', '我司', '委派', '调查核实',
+            '秉承', '依法', '独立', '客观', '公正'],
+        3: ['调查', '走访', '笔录', '调查员', '前往', '了解', '调取', '附件',
+            '门诊病历', '出院记录', '住院', '诊断', '入院', '出院', '劳动合同',
+            '身份信息', '身份证', '预缴金'],
+        4: ['事故原因', '经过', '事发', '摔伤', '坠落', '受伤', '骨折', '高处摔伤',
+            '桡骨远端骨折', '锁骨骨折', '肋骨骨折'],
+        5: ['同业排查', '调查重点', '需要解决的问题', '核实', '核查',
+            '排查', '特约条款', '安全绳', '安全带', '高处作业'],
+        6: ['保险责任', '赔付', '理赔', '理算', '医疗费用', '伤残',
+            '住院津贴', '免赔天数', '赔偿', '给付比例', '伤残等级',
+            '责任限额', '医疗费', '损失'],
+        7: ['结论', '认定', '属实', '属实', '建议', '综上所述',
+            '事故属实', '保险期限', '意外伤害', '建议保险公司'],
+    }
+    
+    # 遍历模板章节，用内容关键词智能匹配源文档内容
     used_source_nums = set()
+    # 第一步：对每个模板章节，从所有未使用的源章节中找最佳匹配
     for tpl_num, tpl_title_idx, tpl_content_indices in tpl_chapters:
-        # 每个章节重置自动编号计数器
         _reset_auto_number()
-        # 输出模板标题（保留模板格式）
+        # 输出模板标题
         if tpl_title_idx < len(all_tpl_paras):
             new_body.append(deepcopy(all_tpl_paras[tpl_title_idx]))
-        # 查找同编号的源文档内容
-        if tpl_num in source_by_num:
-            used_source_nums.add(tpl_num)
-            for si in source_by_num[tpl_num]:
+        
+        # 收集所有源文档的内容段落（已剥离编号的文本）
+        source_content_texts = {}  # source_num -> [(para_idx, clean_text)]
+        for snum, s_indices in source_chapters:
+            if snum in used_source_nums:
+                continue
+            texts = []
+            for si in s_indices:
                 if si < len(all_source_paras):
-                    elem = deepcopy(all_source_paras[si])
-                    try:
-                        result = _strip_source_formatting_and_apply_style(elem, is_chapter_content=True, add_number=True)
-                        if result is not False:
-                            new_body.append(elem)
-                    except:
-                        pass
+                    pe = all_source_paras[si]
+                    t_els = pe.findall('.//w:t', nsp)
+                    pt = ''.join(t.text or '' for t in t_els).strip()
+                    ct = _strip_source_numbering(pt)
+                    if ct and not _is_only_number_or_empty(ct):
+                        texts.append((si, ct))
+            if texts:
+                source_content_texts[snum] = texts
+        
+        # 如果没有源内容可以匹配，跳过的模板章节（保留模板标题但内容为空）
+        if not source_content_texts:
+            empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
+            empty_r = etree.SubElement(empty_p, f'{{{nsp["w"]}}}r')
+            empty_t = etree.SubElement(empty_r, f'{{{nsp["w"]}}}t')
+            empty_t.text = ''
+            continue
+        
+        # 计算每个源章节对当前模板章节的内容匹配分数
+        keywords = TPL_KEYWORDS.get(tpl_num, [])
+        best_snum = None
+        best_score = -1
+        scores = {}
+        for snum, texts in source_content_texts.items():
+            score = 0
+            for pi, ct in texts:
+                for kw in keywords:
+                    if kw in ct:
+                        score += 1
+            scores[snum] = score
+        
+        # 选择分数最高的（且至少匹配了1个关键词）
+        for snum, score in scores.items():
+            if score > best_score:
+                best_score = score
+                best_snum = snum
+        
+        if best_snum is not None and best_score > 0:
+            used_source_nums.add(best_snum)
+            for si in source_chapters[best_snum - 1][1] if best_snum <= len(source_chapters) else []:
+                actual_idx = None
+                for idx, (num, _) in enumerate(source_chapters):
+                    if num == best_snum:
+                        actual_idx = idx
+                        break
+                if actual_idx is not None:
+                    for pi in source_chapters[actual_idx][1]:
+                        if pi < len(all_source_paras):
+                            elem = deepcopy(all_source_paras[pi])
+                            try:
+                                result = _strip_source_formatting_and_apply_style(elem, is_chapter_content=True, add_number=True)
+                                if result is not False:
+                                    new_body.append(elem)
+                            except:
+                                pass
         else:
-            # 源文档没有此编号 → 空段落
+            # 没有匹配到 → 留空
             empty_p = etree.SubElement(new_body, f'{{{nsp["w"]}}}p')
             empty_r = etree.SubElement(empty_p, f'{{{nsp["w"]}}}r')
             empty_t = etree.SubElement(empty_r, f'{{{nsp["w"]}}}t')
             empty_t.text = ''
     
-    # ====== 3. 源文档额外的章节（模板没有对应编号的） ======
+    # ====== 3. 源文档中未被使用的内容，用源文档标题追加 ======
     for snum, s_indices in source_chapters:
         if snum not in used_source_nums:
+            # 找源文档章节标题
+            src_title = ''
+            for pi in range(len(all_source_paras)):
+                pe = all_source_paras[pi]
+                t_els = pe.findall('.//w:t', nsp)
+                pt = ''.join(t.text or '' for t in t_els).strip()
+                if _is_heading_text(pt):
+                    # 检查这个标题后是否跟着当前章节的内容
+                    pass
+            # 直接输出内容（无标题）
             for si in s_indices:
                 if si < len(all_source_paras):
                     elem = deepcopy(all_source_paras[si])
