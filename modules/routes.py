@@ -1360,13 +1360,60 @@ async def run_report_with_preset(request: Request):
                 else:
                     log_write(f'[OCR] 千问VL API未配置')
                     
+                # 3. 最终兜底：尝试本地 pytesseract
+                log_write(f'[DEBUG] 外部OCR均失败，尝试本地Tesseract...')
+                try:
+                    import subprocess
+                    import tempfile
+                    # 保存图片到临时文件
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                    tmp.write(content)
+                    tmp.close()
+                    try:
+                        # 尝试使用 tesseract
+                        result = subprocess.run(
+                            ['tesseract', tmp.name, 'stdout', '-l', 'chi_sim+eng'],
+                            capture_output=True, text=True, timeout=30
+                        )
+                        if result.returncode == 0 and result.stdout.strip():
+                            local_text = result.stdout.strip()
+                            log_write(f'[Tesseract] 识别 {filename} 成功，长度 {len(local_text)}')
+                            return {
+                                'name': filename,
+                                'text': local_text,
+                                'is_statement': is_statement
+                            }
+                    except FileNotFoundError:
+                        log_write(f'[Tesseract] 未安装，跳过')
+                    except Exception as e2:
+                        log_write(f'[Tesseract] 失败: {e2}')
+                    finally:
+                        try: os.unlink(tmp.name)
+                        except: pass
+                except Exception as e3:
+                    log_write(f'[本地OCR] 异常: {e3}')
+                
+                # 4. 全部OCR都失败时，返回占位文本（避免文字数为0）
                 log_write(f'[WARNING] 所有OCR服务都未能识别图片: {filename}')
+                from PIL import Image
+                import io as _io2
+                try:
+                    img = Image.open(_io2.BytesIO(content))
+                    w, h = img.size
+                    placeholder = f'[图片 {filename}，{w}x{h}px，未识别到文字]'
+                except:
+                    placeholder = f'[图片 {filename}，未识别到文字]'
+                return {
+                    'name': filename,
+                    'text': placeholder,
+                    'is_statement': is_statement
+                }
             except Exception as e:
                 log_write(f'[OCR] 图片处理异常: {e}')
                 import traceback
                 log_write(traceback.format_exc())
             
-            return None
+            return {'name': getattr(file_value, 'filename', f'image_{index+1}.png'), 'text': '(OCR未识别到文字)', 'is_statement': is_statement}
         
         # 处理所有图片
         all_files = [(f, False, i) for i, f in enumerate(image_files)] + \
