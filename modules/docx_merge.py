@@ -181,16 +181,26 @@ def _merge_content_into_template(template_doc: Document, source_bytes: bytes, ou
         # 纯中文数字（一至十三等）
         if re.match(r'^[一二三四五六七八九十]+$', s):
             return True
-        # 编号+标点结尾（单独一行）
-        if re.match(r'^[（(]?\d+[）).、]?$', s):
-            return True
-        if re.match(r'^[①-⑩]$', s):
-            return True
-        if re.match(r'^[A-Z][、．\.]?$', s):
-            return True
-        # 只含有编号和标点符号
-        if re.match(r'^[\d一二三四五六七八九十①-⑩、．\.）).(（\s]+$', s) and len(s) <= 3:
-            return True
+        # 各种编号形式，长度<=5个字符，没有中文正文
+        lone_number_patterns = [
+            r'^\d+[、．\.\s]*$',           # 1、 2. 3
+            r'^[(（]\d+[)）]$',            # (1)（2）
+            r'^\d+[）)$]',                 # 1）2)
+            r'^[①-⑩]$',                  # ①②
+            r'^[A-Za-z][、．\.]?$',       # A. B、
+            r'^[(（][A-Za-z][)）]$',       # (A)（B）
+            r'^[一二三四五六七八九十]+[、．\.\s]*$',  # 一、 二．
+            r'^[(（][一二三四五六七八九十]+[)）]$',   # （一）(二)
+            r'^第[一二三四五六七八九十]+[、．\.]?$',  # 第一、第二
+        ]
+        for pat in lone_number_patterns:
+            if re.match(pat, s):
+                return True
+        # 只有数字+常见编号标点，没有中文汉字
+        if not re.search(r'[\u4e00-\u9fff]', s) and not re.search(r'[a-zA-Z]{2,}', s):
+            cleaned = re.sub(r'[\d\s、．\.）).(（\d①-⑩A-Za-z]', '', s)
+            if not cleaned:
+                return True
         return False
 
     def _strip_source_numbering(text):
