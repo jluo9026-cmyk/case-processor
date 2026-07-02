@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libxml2 \
     libxslt1.1 \
+    tesseract-ocr \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件

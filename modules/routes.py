@@ -1360,38 +1360,41 @@ async def run_report_with_preset(request: Request):
                 else:
                     log_write(f'[OCR] 千问VL API未配置')
                     
-                # 3. 最终兜底：尝试本地 pytesseract
+                # 3. 最终兜底：使用 pytesseract 本地 OCR（已安装中文语言包）
                 log_write(f'[DEBUG] 外部OCR均失败，尝试本地Tesseract...')
                 try:
-                    import subprocess
-                    import tempfile
-                    # 保存图片到临时文件
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-                    tmp.write(content)
-                    tmp.close()
-                    try:
-                        # 尝试使用 tesseract
-                        result = subprocess.run(
-                            ['tesseract', tmp.name, 'stdout', '-l', 'chi_sim+eng'],
-                            capture_output=True, text=True, timeout=30
-                        )
-                        if result.returncode == 0 and result.stdout.strip():
-                            local_text = result.stdout.strip()
-                            log_write(f'[Tesseract] 识别 {filename} 成功，长度 {len(local_text)}')
-                            return {
-                                'name': filename,
-                                'text': local_text,
-                                'is_statement': is_statement
-                            }
-                    except FileNotFoundError:
-                        log_write(f'[Tesseract] 未安装，跳过')
-                    except Exception as e2:
-                        log_write(f'[Tesseract] 失败: {e2}')
-                    finally:
-                        try: os.unlink(tmp.name)
-                        except: pass
-                except Exception as e3:
-                    log_write(f'[本地OCR] 异常: {e3}')
+                    from PIL import Image, ImageEnhance, ImageFilter
+                    import io as _io3
+                    import pytesseract
+                    
+                    # 加载图片并预处理提高识别率
+                    img = Image.open(_io3.BytesIO(content))
+                    # 转为灰度图
+                    img = img.convert('L')
+                    # 增强对比度
+                    enhancer = ImageEnhance.Contrast(img)
+                    img = enhancer.enhance(2.0)
+                    # 二值化（阈值128）
+                    img = img.point(lambda x: 0 if x < 128 else 255)
+                    
+                    # 使用pytesseract识别中文+英文
+                    local_text = pytesseract.image_to_string(img, lang='chi_sim+eng', config='--psm 6')
+                    if local_text and local_text.strip():
+                        local_text = local_text.strip()
+                        log_write(f'[Tesseract] 识别 {filename} 成功，长度 {len(local_text)}')
+                        return {
+                            'name': filename,
+                            'text': local_text,
+                            'is_statement': is_statement
+                        }
+                    else:
+                        log_write(f'[Tesseract] 识别 {filename} 结果为空')
+                except ImportError:
+                    log_write(f'[Tesseract] pytesseract 未安装，跳过')
+                except FileNotFoundError:
+                    log_write(f'[Tesseract] tesseract-ocr 未安装，跳过')
+                except Exception as e2:
+                    log_write(f'[Tesseract] 识别失败: {e2}')
                 
                 # 4. 全部OCR都失败时，返回占位文本（避免文字数为0）
                 log_write(f'[WARNING] 所有OCR服务都未能识别图片: {filename}')
